@@ -27,7 +27,8 @@
   },
   "autoload-dev": {
     "psr-4": {
-      "Milpa\\Live\\Tests\\": "tests/"
+      "Milpa\\Live\\Tests\\": "tests/",
+      "Milpa\\Docs\\": "vendor/milpa/core/tools/gen-docs/"
     }
   }
 }
