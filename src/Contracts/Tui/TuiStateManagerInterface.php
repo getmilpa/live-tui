@@ -1,5 +1,15 @@
 <?php
 
+/**
+ * This file is part of Milpa Live TUI — the terminal transport layer (retained-mode runtime, ANSI painting, node rendering) of the Milpa PHP framework live component system.
+ *
+ * (c) Rodrigo Vicente - TeamX Agency — https://teamx.agency <hola@teamx.agency>
+ *
+ * @license Apache-2.0
+ *
+ * @link    https://github.com/getmilpa/live-tui
+ */
+
 declare(strict_types=1);
 
 namespace Milpa\Live\Contracts\Tui;
