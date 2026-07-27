@@ -55,6 +55,7 @@ final class InteractiveTuiLoop
             $this->instances[$instance->id] = $instance;
         }
 
+        $this->keys = new InputBuffer();
         $this->focus = new FocusManager(array_keys($this->instances));
         $this->restoreSession();
     }
@@ -146,26 +147,39 @@ final class InteractiveTuiLoop
     }
 
     /**
-     * Bytes already polled from the terminal and not yet turned into keys.
+     * The same assembler the retained loop uses. Its own three-byte version
+     * turned a fragmented arrow into Escape, bracket, letter: it took the ESC,
+     * found nothing after it in that chunk, and emitted the three bytes as
+     * three keys. A terminal is free to split a sequence across reads, so an
+     * assembler that only looks at the current chunk cannot be correct.
      */
-    private string $pendingChunk = '';
+    private readonly InputBuffer $keys;
+
+    /**
+     * When the buffer first reported a partial sequence, so a fragment still
+     * arriving is not mistaken for an abandoned Escape.
+     */
+    private ?float $pendingSince = null;
 
     /**
      * Runs the loop against a {@see TerminalInterface} instead of raw streams.
      *
-     * Two things had to change to get here, and both are the cost of this loop
-     * not being retained:
+     * Two things are different from {@see self::run()}:
      *
-     * 1. Key assembly reads from a CHUNK, not a stream. The byte-at-a-time
-     *    reads become slices off `$pendingChunk`, keeping the same three-byte
-     *    escape semantics this loop has always had.
+     * 1. Key assembly goes through {@see InputBuffer}, the same one the
+     *    retained loop uses, so a sequence split across reads is reassembled
+     *    instead of emitted as its separate bytes.
      * 2. Painting moved OUT of the top of the loop. Polling means many ticks
      *    with no key, and this loop repaints in full — leaving the paint where
      *    it was would redraw the whole screen on every idle tick.
      *
-     * @param int $idleMicroseconds How long to idle when a tick produced no key.
+     * @param int $idleMicroseconds          How long to idle when a tick produced no key.
+     * @param int $escapeTimeoutMicroseconds How long a partial sequence may sit before it is
+     *                                       emitted as-is. A terminal delivers the rest of a CSI
+     *                                       in microseconds; a person leaves an Escape pending for
+     *                                       as long as they like.
      */
-    public function runOn(TerminalInterface $terminal, int $idleMicroseconds = 100000): void
+    public function runOn(TerminalInterface $terminal, int $idleMicroseconds = 100000, int $escapeTimeoutMicroseconds = 50000): void
     {
         $pushed = '';
         $terminal->start(
@@ -185,30 +199,36 @@ final class InteractiveTuiLoop
             $this->paintTo($terminal);
 
             while ($this->running) {
-                if ($this->pendingChunk === '') {
-                    $this->pendingChunk = $pushed . $terminal->pollInput();
-                    $pushed = '';
-                }
+                $chunk = $pushed . $terminal->pollInput();
+                $pushed = '';
+                $key = $chunk === '' ? '' : $this->keys->feed($chunk);
 
-                if ($this->pendingChunk === '') {
+                if ($key === '') {
                     // This is what atEndOfInput() exists for: telling "nothing
                     // right now" apart from "nothing ever again". Without it a
                     // finite stream would spin here forever.
-                    if ($terminal->atEndOfInput()) {
+                    if ($this->keys->pending() !== '') {
+                        $ahora = microtime(true);
+                        $this->pendingSince ??= $ahora;
+
+                        if (($ahora - $this->pendingSince) * 1_000_000 >= $escapeTimeoutMicroseconds) {
+                            $this->pendingSince = null;
+                            $key = $this->keys->flush();
+                        }
+                    } elseif ($terminal->atEndOfInput()) {
                         break;
                     }
 
-                    if ($idleMicroseconds > 0) {
-                        usleep($idleMicroseconds);
+                    if ($key === '') {
+                        if ($idleMicroseconds > 0) {
+                            usleep($idleMicroseconds);
+                        }
+
+                        continue;
                     }
-
-                    continue;
                 }
 
-                $key = $this->nextKeyFromChunk();
-                if ($key === '') {
-                    break;
-                }
+                $this->pendingSince = null;
 
                 $this->dispatchKey($key);
                 $this->paintTo($terminal);
@@ -236,31 +256,6 @@ final class InteractiveTuiLoop
         $terminal->write($this->renderScreen() . PHP_EOL);
     }
 
-    /**
-     * The same three-byte escape handling {@see self::readKey()} does, taken
-     * off the pending chunk instead of off a stream.
-     */
-    private function nextKeyFromChunk(): string
-    {
-        if ($this->pendingChunk === '') {
-            return '';
-        }
-
-        $char = $this->pendingChunk[0];
-        $this->pendingChunk = substr($this->pendingChunk, 1);
-
-        if ($char !== "\033") {
-            return $char;
-        }
-
-        $sequence = $char;
-        for ($i = 0; $i < 2 && $this->pendingChunk !== ''; $i++) {
-            $sequence .= $this->pendingChunk[0];
-            $this->pendingChunk = substr($this->pendingChunk, 1);
-        }
-
-        return $sequence;
-    }
 
     /**
      * Runs the loop against the given input and output streams until it is asked
@@ -269,6 +264,11 @@ final class InteractiveTuiLoop
      * Kept alongside {@see self::runOn()} rather than delegating to it: over a
      * non-TTY this path deliberately emits no ANSI, and the terminal contract
      * has no way to say "this surface takes no escape sequences".
+     *
+     * It keeps its own reader, which assembles at most three bytes after an
+     * ESC. Blocking one byte at a time makes fragmentation a non-issue here,
+     * but a sequence longer than three bytes — a bracketed paste, for one —
+     * still arrives in pieces. {@see self::runOn()} does not have that limit.
      *
      * @param resource|null $input
      * @param resource|null $output

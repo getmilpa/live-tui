@@ -210,6 +210,12 @@ final class RetainedTuiLoop
     private string $pushedInput = '';
 
     /**
+     * When the input buffer first reported a partial sequence, so a fragment
+     * that is still arriving is not mistaken for an abandoned Escape.
+     */
+    private ?float $pendingSince = null;
+
+    /**
      * Runs the loop against a {@see TerminalInterface} instead of raw streams.
      *
      * Same body as {@see self::run()} — tick, paint the diff, read a key,
@@ -218,10 +224,19 @@ final class RetainedTuiLoop
      * That is what makes the interactive path drivable by a fake terminal, and
      * therefore testable without one.
      *
-     * @param int $idleMicroseconds How long to idle when a tick produced no key.
-     *                              Zero keeps a scripted run instantaneous.
+     * @param int      $idleMicroseconds          How long to idle when a tick produced no key.
+     *                                            Zero keeps a scripted run instantaneous.
+     * @param int|null $maxTicks                  Stop after this many ticks. Null runs until the loop is
+     *                                            asked to stop, which is what a session wants; a bounded
+     *                                            run is what a test wants, because a loop that never sees
+     *                                            its quit key hangs the suite instead of failing it.
+     * @param int      $escapeTimeoutMicroseconds How long a partial sequence may sit before it is
+     *                                            emitted as-is. A terminal delivers the rest of a CSI in
+     *                                            microseconds; a person leaves an Escape pending for as long
+     *                                            as they like. Flushing sooner destroys fragmented
+     *                                            sequences; never flushing turns Escape into alt+<key>.
      */
-    public function runOn(TerminalInterface $terminal, int $idleMicroseconds = 100000): void
+    public function runOn(TerminalInterface $terminal, int $idleMicroseconds = 100000, ?int $maxTicks = null, int $escapeTimeoutMicroseconds = 50000): void
     {
         $this->previousBuffer = null;
         $this->pushedInput = '';
@@ -252,7 +267,13 @@ final class RetainedTuiLoop
             $terminal->clearScreen();
             $terminal->hideCursor();
 
+            $ticks = 0;
+
             while ($this->running) {
+                if ($maxTicks !== null && ++$ticks > $maxTicks) {
+                    break;
+                }
+
                 $this->tick();
 
                 $frame = $this->nextFrameBytes();
@@ -268,6 +289,26 @@ final class RetainedTuiLoop
                     $this->dispatchKey($key);
 
                     continue;
+                }
+
+                // Un ESC solo no puede distinguirse, en el instante en que
+                // llega, del principio de una secuencia que viene fragmentada:
+                // los dos son el mismo byte. Lo que los separa es el TIEMPO —
+                // una terminal manda el resto en microsegundos, una persona
+                // deja el Escape colgado indefinidamente— así que lo pendiente
+                // se emite solo cuando lleva demasiado esperando.
+                if ($this->inputBuffer->pending() !== '') {
+                    $ahora = microtime(true);
+                    $this->pendingSince ??= $ahora;
+
+                    if (($ahora - $this->pendingSince) * 1_000_000 >= $escapeTimeoutMicroseconds) {
+                        $this->pendingSince = null;
+                        $this->dispatchKey($this->inputBuffer->flush());
+
+                        continue;
+                    }
+                } else {
+                    $this->pendingSince = null;
                 }
 
                 if ($idleMicroseconds > 0) {
