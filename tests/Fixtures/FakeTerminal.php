@@ -36,14 +36,17 @@ final class FakeTerminal implements TerminalInterface
     /** @var list<string> */
     private array $scriptedInput;
 
+    /** @var (callable(): void)|null */
+    private $onResize = null;
+
     /**
      * @param list<string> $scriptedInput One entry is delivered per poll, in order.
      *                                    An empty entry models a tick with no key.
      */
     public function __construct(
         array $scriptedInput = [],
-        private readonly int $columns = 40,
-        private readonly int $rows = 6,
+        private int $columns = 40,
+        private int $rows = 6,
     ) {
         $this->scriptedInput = $scriptedInput;
     }
@@ -55,7 +58,22 @@ final class FakeTerminal implements TerminalInterface
      */
     public function start(callable $onInput, callable $onResize): void
     {
+        $this->onResize = $onResize;
         $this->lifecycle[] = 'start';
+    }
+
+    /**
+     * Simulates the terminal being resized: changes what it reports and fires
+     * the callback, exactly as a SIGWINCH would.
+     */
+    public function resizeTo(int $columns, int $rows): void
+    {
+        $this->columns = $columns;
+        $this->rows = $rows;
+
+        if ($this->onResize !== null) {
+            ($this->onResize)();
+        }
     }
 
     /**

@@ -198,6 +198,97 @@ final class RetainedTuiLoopTest extends TestCase
         self::assertStringContainsString("\x1b[?25h", $written, 'And handed back.');
     }
 
+    /**
+     * @param list<string> $keys
+     */
+    private function resizingLoop(array $keys, ?FakeTerminal &$terminal, int $w, int $h, int $newW, int $newH): RetainedTuiLoop
+    {
+        $registry = new TuiNodeRendererRegistry();
+        $registry->register(new TextRenderer());
+        $terminal = new FakeTerminal($keys, $w, $h);
+        $captured = $terminal;
+        $ticks = 0;
+
+        return new RetainedTuiLoop(
+            new RetainedTuiRenderer(new SimpleTuiLayoutEngine(), $registry),
+            fn (): TuiNode => new TuiNode('root', 'box', children: [
+                new TuiNode('a', 'text', props: ['text' => $this->label]),
+            ]),
+            ['a'],
+            'a',
+            $w,
+            $h,
+            true,
+            static fn (string $key): bool => false,
+            // Resize on the SECOND tick, so the first frame is painted at the
+            // old size and the resize genuinely happens mid-run.
+            static function () use ($captured, &$ticks, $newW, $newH): void {
+                $ticks++;
+                if ($ticks === 2) {
+                    $captured->resizeTo($newW, $newH);
+                }
+            },
+        );
+    }
+
+    public function testItAdoptsTheTerminalSizeAtStartupNotJustOnResize(): void
+    {
+        // The resize callback only fires on CHANGE. A loop constructed with a
+        // guessed size and run on a real terminal has to ask once, or it paints
+        // at the guess until the user happens to resize the window.
+        $registry = new TuiNodeRendererRegistry();
+        $registry->register(new TextRenderer());
+        $terminal = new FakeTerminal(['q'], 72, 8);
+
+        $loop = new RetainedTuiLoop(
+            new RetainedTuiRenderer(new SimpleTuiLayoutEngine(), $registry),
+            fn (): TuiNode => new TuiNode('root', 'box', children: [
+                new TuiNode('a', 'text', props: ['text' => $this->label]),
+            ]),
+            ['a'],
+            'a',
+            20,
+            3,
+            true,
+        );
+
+        $loop->runOn($terminal, idleMicroseconds: 0);
+
+        self::assertStringContainsString(
+            str_repeat(' ', 60),
+            $terminal->output(),
+            'The loop painted at its constructed size instead of the terminal\'s.',
+        );
+    }
+
+    public function testAResizeMidRunChangesTheGeometryOfTheNextFrame(): void
+    {
+        $loop = $this->resizingLoop(['', '', '', 'q'], $terminal, 40, 6, 72, 10);
+
+        $loop->runOn($terminal, idleMicroseconds: 0);
+
+        $painted = array_values(array_filter($terminal->writes, static fn (string $w): bool => $w !== ''));
+
+        self::assertCount(2, $painted, 'One frame at the old size, one after the resize.');
+        self::assertStringNotContainsString(str_repeat(' ', 60), $painted[0], 'The first frame is the old width.');
+        self::assertStringContainsString(str_repeat(' ', 60), $painted[1], 'The second carries the new one.');
+    }
+
+    public function testAShrinkMidRunForcesAFullRepaintRatherThanADiff(): void
+    {
+        // The diff walks the CURRENT buffer's rows, so after a shrink the rows
+        // that no longer exist are never visited and their contents would stay
+        // on screen. The frame after a resize has to be a full paint.
+        $loop = $this->resizingLoop(['', '', '', 'q'], $terminal, 60, 10, 60, 4);
+
+        $loop->runOn($terminal, idleMicroseconds: 0);
+
+        $painted = array_values(array_filter($terminal->writes, static fn (string $w): bool => $w !== ''));
+
+        self::assertCount(2, $painted, 'The resize must have produced a further frame.');
+        self::assertStringContainsString("\033[H", $painted[1], 'A resize repaints in full.');
+    }
+
     private function withHandler(RetainedTuiLoop $loop, FakeTerminal $terminal): RetainedTuiLoop
     {
         $registry = new TuiNodeRendererRegistry();

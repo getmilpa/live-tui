@@ -69,8 +69,8 @@ final class RetainedTuiLoop
         callable $rootFactory,
         array $focusOrder,
         string $initialFocus,
-        private readonly int $width,
-        private readonly int $height,
+        private int $width,
+        private int $height,
         private readonly bool $ansi = true,
         ?callable $handleKey = null,
         ?callable $tick = null,
@@ -230,9 +230,16 @@ final class RetainedTuiLoop
             function (string $bytes): void {
                 $this->pushedInput .= $bytes;
             },
-            static function (): void {
+            function () use ($terminal): void {
+                $this->resizeTo($terminal->columns(), $terminal->rows());
             },
         );
+
+        // A terminal reports its size on demand; the resize callback only fires
+        // when it CHANGES. Without asking once at startup the loop would render
+        // at whatever size it was constructed with until the user happened to
+        // resize the window.
+        $this->resizeTo($terminal->columns(), $terminal->rows());
 
         try {
             // Bracketed paste has to bracket the SESSION, not a frame: without
@@ -302,6 +309,26 @@ final class RetainedTuiLoop
         }
 
         $this->runOn(new StreamTerminal(null, $input, $output));
+    }
+
+    /**
+     * Adopts a new terminal size.
+     *
+     * Dropping the previous buffer is not housekeeping, it is the point: the
+     * diff walks the CURRENT buffer's rows, so after a shrink the rows that no
+     * longer exist are never visited and their old contents stay on screen.
+     * Forgetting the previous frame turns the next one into a full repaint,
+     * which is the only correct answer to a resize.
+     */
+    public function resizeTo(int $width, int $height): void
+    {
+        if ($width === $this->width && $height === $this->height) {
+            return;
+        }
+
+        $this->width = max(1, $width);
+        $this->height = max(1, $height);
+        $this->previousBuffer = null;
     }
 
     private function tick(): void

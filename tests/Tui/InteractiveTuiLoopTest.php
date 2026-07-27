@@ -40,6 +40,37 @@ use PHPUnit\Framework\TestCase;
 #[CoversClass(InteractiveTuiLoop::class)]
 final class InteractiveTuiLoopTest extends TestCase
 {
+    public function testAResizeChangesTheWidthItRendersAt(): void
+    {
+        // Same no-op onResize the retained loop had: without wiring, a terminal
+        // that grows keeps getting output sized for the one it used to be.
+        $terminal = new FakeTerminal(['q'], 40, 6);
+        $loop = $this->loop();
+
+        $loop->runOn($terminal, idleMicroseconds: 0);
+        $before = $terminal->output();
+
+        $wide = new FakeTerminal(['q'], 100, 6);
+        $this->loop()->runOn($wide, idleMicroseconds: 0);
+
+        // The second run reports a wider terminal, so its rule must be longer.
+        self::assertGreaterThan(
+            self::longestLine($before),
+            self::longestLine($wide->output()),
+            'The loop rendered at the same width for two different terminals.',
+        );
+    }
+
+    private static function longestLine(string $text): int
+    {
+        $longest = 0;
+        foreach (explode("\n", $text) as $line) {
+            $longest = max($longest, mb_strlen(rtrim($line)));
+        }
+
+        return $longest;
+    }
+
     private function loop(): InteractiveTuiLoop
     {
         $component = new class () implements ComponentDefinitionInterface {
