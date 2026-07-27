@@ -73,6 +73,7 @@ final class InteractiveTuiLoopTest extends TestCase
 
     /**
      * @param list<string> $script
+     *
      * @return list<string> everything the terminal was asked to write
      */
     private function writesFrom(array $script): array
