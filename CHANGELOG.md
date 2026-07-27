@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0](https://github.com/getmilpa/live-tui/compare/v0.1.0...v0.2.0) (2026-07-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* TerminalInterface gains pollInput() and atEndOfInput(). Existing signatures are unchanged, but any external implementor must add the two methods. There are none today — zero dependents on Packagist.
+
+### Features
+
+* drive both TUI loops through TerminalInterface ([#2](https://github.com/getmilpa/live-tui/issues/2)) ([a79249d](https://github.com/getmilpa/live-tui/commit/a79249d0524208faaf874822becc8f87b674a2f9))
+
 ## 0.1.0 (2026-07-27)
 
 
