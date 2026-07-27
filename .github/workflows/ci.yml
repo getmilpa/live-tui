@@ -49,16 +49,8 @@ jobs:
       - name: PHPUnit + coverage floor
         env:
           XDEBUG_MODE: coverage
-        # El piso no es una meta, es un trinquete: hoy vale 32% y solo puede
-        # subir. Se descubrió midiendo — la herramienta estaba en el toolchain
-        # y ningún paso la encendía, así que 20 de los 23 renderers que el
-        # paquete publica nunca habían corrido.
-        run: vendor/bin/phpunit --testsuite LiveTui --coverage-text --coverage-clover=build/clover.xml
-          && php -r '$x = simplexml_load_file("build/clover.xml");
-              $m = $x->project->metrics;
-              $pct = 100 * (int) $m["coveredstatements"] / max(1, (int) $m["statements"]);
-              printf("cobertura de líneas: %.2f%%%s", $pct, PHP_EOL);
-              if ($pct < 32.0) { fwrite(STDERR, "por debajo del piso de 32%\n"); exit(1); }'
-
+        run: |
+          vendor/bin/phpunit --testsuite LiveTui --coverage-text --coverage-clover=build/clover.xml
+          php tools/coverage-floor.php build/clover.xml 32
       - name: DocBlock coverage gate
         run: php tools/validate-docblocks.php
