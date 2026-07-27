@@ -1,0 +1,33 @@
+{
+  "name": "milpa/live-tui",
+  "description": "Terminal transport layer for Milpa Live: a retained-mode TUI runtime with virtual-buffer diffing, its own ANSI painter, focus and shortcut management, and the node renderers that paint Milpa Live components in the terminal for the Milpa PHP framework.",
+  "type": "library",
+  "license": "Apache-2.0",
+  "authors": [
+    {
+      "name": "Rodrigo Vicente - TeamX Agency",
+      "homepage": "https://x.com/rodrigoteamx"
+    }
+  ],
+  "require": {
+    "php": ">=8.3",
+    "milpa/core": "^0.6",
+    "milpa/live": "^0.1"
+  },
+  "require-dev": {
+    "phpunit/phpunit": "^11.5",
+    "phpstan/phpstan": "^2.1",
+    "phpstan/phpdoc-parser": "^2.3",
+    "friendsofphp/php-cs-fixer": "^3.65"
+  },
+  "autoload": {
+    "psr-4": {
+      "Milpa\\Live\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Milpa\\Live\\Tests\\": "tests/"
+    }
+  }
+}

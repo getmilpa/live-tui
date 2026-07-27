@@ -1,0 +1,474 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Milpa\Live\Tui;
+
+use Milpa\Live\Contracts\Tui\FocusManagerInterface;
+use Milpa\Live\ValueObjects\Tui\TuiBufferDiff;
+use Milpa\Live\ValueObjects\Tui\TuiNode;
+
+/**
+ * The retained-mode loop: renders the tree into a buffer, diffs it against the
+ * previous one, and writes only the rows that changed. Owns focus, key
+ * dispatch, session values and the input buffer for the run.
+ */
+final class RetainedTuiLoop
+{
+    private bool $running = true;
+
+    /**
+     * @var array<string, mixed>
+     */
+    private array $state = [];
+
+    private FocusManagerInterface $focus;
+
+    private string $initialFocusFallback;
+
+    /**
+     * Last frame painted by {@see self::run()}, used to compute
+     * {@see VirtualTerminalBuffer::diff()} against the next frame so only
+     * changed rows are written to the terminal. Reset to null whenever a
+     * full repaint is required (loop start), so the very first frame is
+     * always a full paint and every frame after it is diff-only.
+     */
+    private ?VirtualTerminalBuffer $previousBuffer = null;
+
+    private readonly \Closure $rootFactory;
+
+    private readonly ?\Closure $handleKey;
+
+    private readonly ?\Closure $tick;
+
+    private readonly SynchronizedOutput $sync;
+
+    private readonly ?BracketedPaste $paste;
+
+    /**
+     * @param callable(self): TuiNode           $rootFactory
+     * @param array<int, string>                $focusOrder
+     * @param null|callable(string, self): bool $handleKey
+     * @param null|callable(self): void         $tick
+     * @param null|SynchronizedOutput           $sync        Synchronized-output wrapper for atomic writes; defaults to enabled.
+     * @param null|BracketedPaste               $paste       Bracketed-paste detector; defaults to null (no paste detection).
+     */
+    public function __construct(
+        private readonly RetainedTuiRenderer $renderer,
+        callable $rootFactory,
+        array $focusOrder,
+        string $initialFocus,
+        private readonly int $width,
+        private readonly int $height,
+        private readonly bool $ansi = true,
+        ?callable $handleKey = null,
+        ?callable $tick = null,
+        private readonly ?TuiAnsiPainter $painter = null,
+        ?SynchronizedOutput $sync = null,
+        ?BracketedPaste $paste = null,
+    ) {
+        $this->rootFactory = \Closure::fromCallable($rootFactory);
+        $this->handleKey = $handleKey !== null ? \Closure::fromCallable($handleKey) : null;
+        $this->tick = $tick !== null ? \Closure::fromCallable($tick) : null;
+        $this->sync = $sync ?? new SynchronizedOutput($ansi);
+        $this->paste = $paste;
+        $this->inputBuffer = new InputBuffer();
+        $this->initialFocusFallback = $initialFocus;
+        $this->focus = new FocusManager($focusOrder);
+        if (in_array($initialFocus, $this->focus->ids(), true)) {
+            $this->focus->focus($initialFocus);
+        }
+    }
+
+    /**
+     * The id currently holding focus, falling back to the initial one.
+     */
+    public function focusedId(): string
+    {
+        return $this->focus->currentId() ?? $this->initialFocusFallback;
+    }
+
+    /**
+     * Moves focus to the given id.
+     */
+    public function focus(string $id): void
+    {
+        $this->focus->focus($id);
+    }
+
+    /**
+     * Replaces the focus order, keeping the currently focused id if it survives.
+     *
+     * @param array<int, string> $focusOrder
+     */
+    public function setFocusOrder(array $focusOrder): void
+    {
+        $currentId = $this->focus->currentId();
+        $this->focus = new FocusManager($focusOrder);
+        if ($currentId !== null) {
+            $this->focus->focus($currentId);
+        }
+    }
+
+    /**
+     * Moves focus to the next id in order.
+     */
+    public function focusNext(): void
+    {
+        $this->focus->next();
+        $this->set('status', 'Focus: ' . $this->focusedId());
+    }
+
+    /**
+     * Moves focus to the previous id in order.
+     */
+    public function focusPrevious(): void
+    {
+        $this->focus->previous();
+        $this->set('status', 'Focus: ' . $this->focusedId());
+    }
+
+    /**
+     * A value from the loop's session state, or the default when it is not set.
+     */
+    public function value(string $key, mixed $default = null): mixed
+    {
+        return $this->state[$key] ?? $default;
+    }
+
+    /**
+     * Stores a value in the loop's session state.
+     */
+    public function set(string $key, mixed $value): void
+    {
+        $this->state[$key] = $value;
+    }
+
+    /**
+     * The full screen as a string. Bypasses the diff, so this repaints everything —
+     * it is for the first frame and for a forced redraw, not the steady state.
+     */
+    public function renderScreen(): string
+    {
+        return $this->paintLines($this->currentBuffer()->lines());
+    }
+
+    /**
+     * Routes a key through the shortcut registry and the key handler, returning
+     * whether it was consumed.
+     */
+    public function dispatchKey(string $key): bool
+    {
+        $key = $this->normalizeKey($key);
+        if ($key === '') {
+            return $this->running;
+        }
+
+        if (in_array($key, ['q', 'escape', 'ctrl+c'], true)) {
+            $this->running = false;
+
+            return false;
+        }
+
+        if ($key === 'tab') {
+            $this->focusNext();
+
+            return true;
+        }
+
+        if ($key === 'shift-tab') {
+            $this->focusPrevious();
+
+            return true;
+        }
+
+        if ($this->handleKey !== null && ($this->handleKey)($key, $this) === true) {
+            return $this->running;
+        }
+
+        $this->set('status', 'Unhandled: ' . $key);
+
+        return $this->running;
+    }
+
+    /**
+     * Runs the loop against the given input and output streams, writing only the
+     * rows each frame's diff reports as changed.
+     *
+     * @param resource|null $input
+     * @param resource|null $output
+     */
+    public function run(mixed $input = null, mixed $output = null): void
+    {
+        $input ??= STDIN;
+        $output ??= STDOUT;
+        $isTty = function_exists('stream_isatty') && @stream_isatty($input);
+        $stty = null;
+
+        if (!$isTty) {
+            fwrite($output, $this->renderScreen() . PHP_EOL);
+
+            return;
+        }
+
+        $stty = shell_exec('stty -g');
+        shell_exec('stty -icanon -echo min 0 time 0');
+        stream_set_blocking($input, false);
+
+        $this->previousBuffer = null;
+
+        // Enable bracketed-paste mode so the terminal wraps pastes in
+        // \x1b[200~ ... \x1b[201~ and we can treat them as a single event
+        // instead of replaying the content as keystrokes.
+        if ($this->paste !== null) {
+            fwrite($output, BracketedPaste::MODE_BEGIN);
+        }
+
+        try {
+            fwrite($output, "\033[2J\033[?25l");
+            while ($this->running) {
+                $this->tick();
+                $this->paintFrame($output);
+
+                $key = $this->readKey($input);
+                if ($key !== '') {
+                    $this->dispatchKey($key);
+                }
+
+                usleep(100000);
+            }
+        } finally {
+            if ($this->paste !== null) {
+                fwrite($output, BracketedPaste::MODE_END);
+            }
+            fwrite($output, "\033[?25h\033[0m" . PHP_EOL);
+            if (is_string($stty) && trim($stty) !== '') {
+                shell_exec('stty ' . escapeshellarg(trim($stty)));
+            }
+        }
+    }
+
+    private function tick(): void
+    {
+        if ($this->tick !== null) {
+            ($this->tick)($this);
+        }
+    }
+
+    /**
+     * Builds and lays out the current frame without painting it -- shared
+     * by {@see self::renderScreen()} (always a full string) and
+     * {@see self::paintFrame()} (which additionally diffs against the
+     * previous frame so the terminal write only touches changed rows).
+     */
+    private function currentBuffer(): VirtualTerminalBuffer
+    {
+        $root = ($this->rootFactory)($this);
+        if (!$root instanceof TuiNode) {
+            throw new \RuntimeException('Retained TUI root factory must return a TuiNode.');
+        }
+
+        return $this->renderer->render($root, $this->width, $this->height, $this->focusedId());
+    }
+
+    /**
+     * @param array<int, string> $lines
+     */
+    private function paintLines(array $lines): string
+    {
+        if ($this->ansi) {
+            return ($this->painter ?? new TuiAnsiPainter())->paint($lines);
+        }
+
+        return implode(PHP_EOL, $lines);
+    }
+
+    /**
+     * Writes one frame to $output. The first call after a (re)start does a
+     * full clear-and-repaint (there is no previous frame to diff against);
+     * every call after that computes {@see VirtualTerminalBuffer::diff()}
+     * against the last painted frame and writes only the changed rows via
+     * cursor-positioned ANSI patches -- if nothing changed, nothing is
+     * written at all. This is what makes the "flicker-resistant redraws"
+     * capability an actual runtime behavior instead of dead code.
+     *
+     * Public (not just used internally by {@see self::run()}) so the
+     * diff-repaint behavior can be driven and observed directly -- e.g. by
+     * a test harness scripting a state change over a non-TTY stream, where
+     * {@see self::run()}'s own TTY detection would otherwise short-circuit
+     * to a single one-shot render and never reach the interactive loop
+     * body at all. This is the exact per-tick call {@see self::run()}
+     * makes; nothing about it is TTY-specific.
+     *
+     * @param resource $output
+     */
+    public function paintFrame(mixed $output): void
+    {
+        $buffer = $this->currentBuffer();
+
+        if ($this->previousBuffer === null) {
+            $bytes = "\033[H" . $this->paintLines($buffer->lines());
+            $bytes .= $this->positionHardwareCursor();
+            fwrite($output, $this->sync->wrap($bytes));
+            $this->previousBuffer = $buffer;
+
+            return;
+        }
+
+        $diff = $buffer->diff($this->previousBuffer);
+        $this->previousBuffer = $buffer;
+
+        if ($diff->isEmpty()) {
+            $cursor = $this->positionHardwareCursor();
+            if ($cursor !== '') {
+                fwrite($output, $this->sync->wrap($cursor));
+            }
+
+            return;
+        }
+
+        $bytes = $this->paintDiff($diff);
+        $bytes .= $this->positionHardwareCursor();
+        fwrite($output, $this->sync->wrap($bytes));
+    }
+
+    /**
+     * Asks the renderer for the focused node's caret position (via
+     * {@see RetainedTuiRenderer::caretPosition()}, which delegates to
+     * {@see FocusableInterface}) and emits the cursor-position escape
+     * pointing the hardware cursor at that cell. The marker APC cannot
+     * live in the cell-addressed {@see VirtualTerminalBuffer} (it is
+     * zero-width), so the position is derived from the renderer's own
+     * frame — not from the painted output — which keeps the buffer and
+     * the caret concern cleanly separated.
+     */
+    private function positionHardwareCursor(): string
+    {
+        if (!$this->ansi) {
+            return '';
+        }
+        $root = ($this->rootFactory)($this);
+        if (!$root instanceof TuiNode) {
+            return '';
+        }
+        $pos = $this->renderer->caretPosition($root, $this->width, $this->height, $this->focusedId());
+        if ($pos === null) {
+            return '';
+        }
+        [$row, $col] = $pos;
+        $row1 = $row + 1;
+        $col1 = $col + 1;
+
+        return "\x1b[{$row1};{$col1}H";
+    }
+
+    private function paintDiff(TuiBufferDiff $diff): string
+    {
+        if (!$this->ansi) {
+            return $diff->renderAnsiPatch();
+        }
+
+        $painter = $this->painter ?? new TuiAnsiPainter();
+        $painted = array_map(
+            static fn (array $change): array => ['row' => $change['row'], 'line' => $painter->paint([$change['line']])],
+            $diff->changes,
+        );
+
+        return (new TuiBufferDiff($painted))->renderAnsiPatch();
+    }
+
+    private readonly InputBuffer $inputBuffer;
+
+    /**
+     * Pending complete sequences already accepted from InputBuffer
+     * but not yet returned by {@see readKey()}. When bracketed paste
+     * is active, a paste window is stripped from this stream so the
+     * byte-by-byte loop can still dispatch one "key" at a time outside
+     * pastes while the detector consumes the whole paste as one event.
+     */
+    private string $pendingInput = '';
+
+    /**
+     * @param resource $input
+     */
+    private function readKey(mixed $input): string
+    {
+        // Drain any pending complete sequences first.
+        if ($this->pendingInput !== '') {
+            $next = $this->shiftPending();
+            if ($next !== '') {
+                return $next;
+            }
+        }
+
+        // Read a chunk (up to 4096 bytes) and feed it to InputBuffer,
+        // which accumulates partial escape sequences and returns only
+        // complete ones. This replaces the old byte-at-a-time read
+        // that only handled 3-byte ESC sequences — InputBuffer knows
+        // how to assemble CSI/OSC/DCS/APC/SS3/Meta of any length.
+        $chunk = fread($input, 4096);
+        if (!is_string($chunk) || $chunk === '') {
+            return '';
+        }
+
+        $completed = $this->inputBuffer->feed($chunk);
+        if ($this->paste !== null) {
+            $this->pendingInput = $this->paste->feed($completed);
+        } else {
+            $this->pendingInput = $completed;
+        }
+
+        return $this->shiftPending();
+    }
+
+    /**
+     * Shifts one logical keypress off the front of {@see pendingInput}.
+     * A bare byte is returned as-is; an ANSI escape sequence is read
+     * up to its terminator (the InputBuffer already guaranteed the
+     * pendingInput only holds complete sequences, so we just return
+     * the whole escape run when the first char is ESC).
+     */
+    private function shiftPending(): string
+    {
+        if ($this->pendingInput === '') {
+            return '';
+        }
+        if ($this->pendingInput[0] !== "\033") {
+            // Non-escape: return one printable char (UTF-8 aware).
+            $char = mb_substr($this->pendingInput, 0, 1, 'UTF-8');
+            $this->pendingInput = mb_substr($this->pendingInput, 1, null, 'UTF-8');
+
+            return $char;
+        }
+        // Escape sequence: return the whole run. InputBuffer guaranteed
+        // it is complete, so we do not need to re-parse it.
+        $next = strpos($this->pendingInput, "\033", 1);
+        if ($next === false) {
+            $sequence = $this->pendingInput;
+            $this->pendingInput = '';
+        } else {
+            $sequence = substr($this->pendingInput, 0, $next);
+            $this->pendingInput = substr($this->pendingInput, $next);
+        }
+
+        return $sequence;
+    }
+
+    private function normalizeKey(string $key): string
+    {
+        return match ($key) {
+            "\033[A" => 'up',
+            "\033[B" => 'down',
+            "\033[Z" => 'shift-tab',
+            "\033", "\e" => 'escape',
+            "\t" => 'tab',
+            "\n", "\r" => 'enter',
+            ' ' => 'space',
+            "\177", "\010" => 'backspace',
+            "\020" => 'ctrl+p',
+            "\014" => 'ctrl+l',
+            "\003" => 'ctrl+c',
+            default => strtolower($key),
+        };
+    }
+}

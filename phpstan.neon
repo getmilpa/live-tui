@@ -1,0 +1,21 @@
+parameters:
+    level: 6
+    paths:
+        - src
+
+    # Declared deviation from the rest of the family, which runs with the
+    # default (`true`).
+    #
+    # This package receives node trees and prop bags from producers it does not
+    # control: `TuiNode::$props` is `array<string, mixed>` by contract, and the
+    # `is_array()` / `is_string()` / `instanceof` checks the renderers perform
+    # on those values are RUNTIME guards, not dead branches. With the default,
+    # PHPStan reports them as redundant because a PHPDoc promises the type —
+    # and a PHPDoc is not enforced at runtime. Deleting the guards to satisfy
+    # the analyser would trade a blank frame for a TypeError in the user's
+    # terminal.
+    #
+    # This turns off that certainty and nothing else. The rest of level 6 still
+    # applies, and the 17 errors that did *not* come from PHPDoc were fixed in
+    # the code rather than silenced here.
+    treatPhpDocTypesAsCertain: false
