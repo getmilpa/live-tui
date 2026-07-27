@@ -376,7 +376,7 @@ final class InteractiveTuiLoop
             if (is_array($item)) {
                 $this->apply($current, 'select', ['item' => $item]);
                 $current->cursor = 0;
-                $this->status = 'Selected: ' . $this->label($item);
+                $this->announce('Selected: ' . $this->label($item));
                 return;
             }
         }
@@ -387,14 +387,14 @@ final class InteractiveTuiLoop
             if (is_array($row)) {
                 $rowId = $this->rowId($row);
                 $this->apply($current, 'toggle-row', ['rowId' => $rowId]);
-                $this->status = 'Toggled row: ' . $rowId;
+                $this->announce('Toggled row: ' . $rowId);
                 return;
             }
         }
 
         if ($name === 'checkbox') {
             $this->apply($current, 'change', ['checked' => !(bool) ($state->data['checked'] ?? false)]);
-            $this->status = 'Toggled checkbox';
+            $this->announce('Toggled checkbox');
             return;
         }
 
@@ -403,7 +403,7 @@ final class InteractiveTuiLoop
             $option = $options[$current->cursor] ?? null;
             if (is_array($option) && !($option['disabled'] ?? false)) {
                 $this->apply($current, 'change', ['value' => $option['value']]);
-                $this->status = 'Selected: ' . $option['label'];
+                $this->announce('Selected: ' . $option['label']);
                 return;
             }
         }
@@ -433,8 +433,15 @@ final class InteractiveTuiLoop
 
         $this->apply($current, $action);
         $current->cursor = 0;
-        $this->status = 'Cleared ' . $name;
+        $this->announce('Cleared ' . $name);
     }
+
+    /**
+     * The message the last applied action was rejected with, or null when it
+     * was accepted. Cleared by every {@see self::apply()}, so it only ever
+     * describes the action just applied.
+     */
+    private ?string $rejection = null;
 
     /**
      * @param array<string, mixed> $payload
@@ -451,9 +458,23 @@ final class InteractiveTuiLoop
         ));
 
         $instance->state = $result->state;
-        if ($result->errors !== []) {
-            $this->status = implode('; ', array_map('strval', $result->errors));
-        }
+        $this->rejection = $result->errors !== []
+            ? implode('; ', array_map('strval', $result->errors))
+            : null;
+    }
+
+    /**
+     * Announces the outcome of an applied action.
+     *
+     * Writing the success message straight into `$this->status` is what made
+     * the errors branch of {@see self::apply()} unreachable in practice: every
+     * caller overwrote the rejection on the very next line, so a component
+     * that refused an action still reported success to the person watching.
+     * The rejection wins; the caller's message is what to say otherwise.
+     */
+    private function announce(string $success): void
+    {
+        $this->status = $this->rejection ?? $success;
     }
 
     private function typeIntoFocused(string $key): bool
@@ -494,12 +515,12 @@ final class InteractiveTuiLoop
         if ($instance->componentName() === 'autocomplete') {
             $this->apply($instance, 'search', ['query' => $value]);
             $instance->cursor = 0;
-            $this->status = 'Search: ' . ($value !== '' ? $value : '(empty)');
+            $this->announce('Search: ' . ($value !== '' ? $value : '(empty)'));
             return;
         }
 
         $this->apply($instance, 'change', ['value' => $value]);
-        $this->status = 'Changed: ' . ($value !== '' ? $value : '(empty)');
+        $this->announce('Changed: ' . ($value !== '' ? $value : '(empty)'));
     }
 
     private function choiceCount(TuiComponentInstance $instance): int
