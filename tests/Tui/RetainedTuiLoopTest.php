@@ -414,4 +414,105 @@ final class RetainedTuiLoopTest extends TestCase
             },
         );
     }
+
+    // ---- which key is which ------------------------------------------------------
+
+    /**
+     * A loop with three focusable nodes and a handler that records every key it
+     * is handed, so a test can see what the loop decided a byte sequence was.
+     *
+     * @param list<string> $recibidas
+     */
+    private function navigable(array &$recibidas): RetainedTuiLoop
+    {
+        $registry = new TuiNodeRendererRegistry();
+        $registry->register(new TextRenderer());
+
+        return new RetainedTuiLoop(
+            new RetainedTuiRenderer(new SimpleTuiLayoutEngine(), $registry),
+            fn (): TuiNode => new TuiNode('root', 'box', children: [
+                new TuiNode('a', 'text', props: ['text' => 'a']),
+                new TuiNode('b', 'text', props: ['text' => 'b']),
+                new TuiNode('c', 'text', props: ['text' => 'c']),
+            ]),
+            ['a', 'b', 'c'],
+            'a',
+            40,
+            8,
+            false,
+            static function (string $key) use (&$recibidas): bool {
+                $recibidas[] = $key;
+
+                return true;
+            },
+        );
+    }
+
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function arrowSequences(): iterable
+    {
+        yield 'right' => ["\033[C", 'right'];
+        yield 'left' => ["\033[D", 'left'];
+        yield 'up' => ["\033[A", 'up'];
+        yield 'down' => ["\033[B", 'down'];
+        yield 'home' => ["\033[H", 'home'];
+        yield 'end' => ["\033[F", 'end'];
+        yield 'pageup' => ["\033[5~", 'pageup'];
+        yield 'pagedown' => ["\033[6~", 'pagedown'];
+    }
+
+    /**
+     * The loop used to answer this question from a private table of its own,
+     * which knew Up and Down but not Left and Right — so an application that
+     * navigates with the arrow keys never saw half of them, and got the raw
+     * escape bytes reported as an unhandled key instead.
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('arrowSequences')]
+    public function testTheHandlerIsHandedTheKeyNameNotTheEscapeBytes(string $bytes, string $expected): void
+    {
+        $recibidas = [];
+        $loop = $this->navigable($recibidas);
+
+        $loop->dispatchKey($bytes);
+
+        self::assertSame([$expected], $recibidas);
+    }
+
+    public function testTabAndShiftTabStillMoveTheFocusThemselves(): void
+    {
+        // The loop consumes these two before the handler sees them; that is
+        // what makes focus movement free for every application.
+        $recibidas = [];
+        $loop = $this->navigable($recibidas);
+
+        $loop->dispatchKey("\t");
+        self::assertSame('b', $loop->focusedId());
+
+        $loop->dispatchKey("\033[Z");
+        self::assertSame('a', $loop->focusedId());
+
+        self::assertSame([], $recibidas, 'Neither reached the handler.');
+    }
+
+    public function testTheQuitKeysStillStopTheLoop(): void
+    {
+        foreach (["q", "\033", "\003"] as $bytes) {
+            $recibidas = [];
+            $loop = $this->navigable($recibidas);
+
+            self::assertFalse($loop->dispatchKey($bytes), 'bytes: ' . bin2hex($bytes));
+        }
+    }
+
+    public function testAPlainLetterReachesTheHandlerLowercased(): void
+    {
+        $recibidas = [];
+        $loop = $this->navigable($recibidas);
+
+        $loop->dispatchKey('L');
+
+        self::assertSame(['l'], $recibidas);
+    }
 }

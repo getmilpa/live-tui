@@ -119,7 +119,7 @@ final class InteractiveTuiLoop
 
         if ($key === 'tab') {
             $this->focusNext();
-        } elseif ($key === 'shift-tab') {
+        } elseif ($key === 'shift+tab') {
             $this->focusPrevious();
         } elseif (in_array($key, ['up', 'k'], true)) {
             $this->moveOrFocus(-1);
@@ -620,19 +620,25 @@ final class InteractiveTuiLoop
         return substr($text, 0, max(1, $width - 1)) . '~';
     }
 
+    /**
+     * What key is this?
+     *
+     * Delegates to {@see KeyMatcher}, which is the package's own answer to that
+     * question — 41 sequences against the nine this loop used to know from a
+     * private `match` of its own. A second table is a second table to keep in
+     * sync, and it had already drifted: it knew Up and Down but not Left and
+     * Right, so an application that navigates with the arrow keys never saw
+     * half of them.
+     *
+     * The one spelling that differs is folded here: this loop's vocabulary said
+     * `shift-tab` while the rest of the package spells modifiers with a plus
+     * (`ctrl+p`, `ctrl+c`). The plus wins; the dash was the odd one out.
+     */
     private function normalizeKey(string $key): string
     {
-        return match ($key) {
-            "\033[A" => 'up',
-            "\033[B" => 'down',
-            "\033[Z" => 'shift-tab',
-            "\033", "\e" => 'escape',
-            "\t" => 'tab',
-            "\n", "\r" => 'enter',
-            ' ' => 'space',
-            "\177", "\010" => 'backspace',
-            default => strtolower($key),
-        };
+        $key = KeyMatcher::normalize($key);
+
+        return $key === 'shift-tab' ? 'shift+tab' : $key;
     }
 
     /**
