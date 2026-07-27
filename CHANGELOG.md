@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/getmilpa/live-tui/compare/v0.2.0...v0.2.1) (2026-07-27)
+
+
+### Bug Fixes
+
+* keep every cell, every shape and every attribution header ([#4](https://github.com/getmilpa/live-tui/issues/4)) ([127097b](https://github.com/getmilpa/live-tui/commit/127097b34308732fee24b735c300e96073d3deb0))
+
 ## [0.2.0](https://github.com/getmilpa/live-tui/compare/v0.1.0...v0.2.0) (2026-07-27)
 
 
