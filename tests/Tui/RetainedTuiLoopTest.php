@@ -201,6 +201,105 @@ final class RetainedTuiLoopTest extends TestCase
     /**
      * @param list<string> $keys
      */
+    public function testALoneEscapeIsNotHeldForever(): void
+    {
+        // InputBuffer holds a bare ESC waiting for the rest of a sequence that
+        // may never come, and merges it with whatever arrives next — so ESC
+        // then 'q' half a second later becomes alt+q. flush() exists for
+        // exactly this and the loop has to call it when a tick brings nothing.
+        $registry = new TuiNodeRendererRegistry();
+        $registry->register(new TextRenderer());
+        $seen = [];
+
+        // ESC, then ticks with nothing for longer than the timeout, then a key
+        // that must arrive whole.
+        $terminal = new FakeTerminal(["\033", '', '', 'q']);
+
+        $loop = new RetainedTuiLoop(
+            new RetainedTuiRenderer(new SimpleTuiLayoutEngine(), $registry),
+            fn (): TuiNode => new TuiNode('root', 'box', children: [
+                new TuiNode('a', 'text', props: ['text' => $this->label]),
+            ]),
+            ['a'],
+            'a',
+            40,
+            6,
+            true,
+            static function (string $key) use (&$seen): bool {
+                $seen[] = $key;
+
+                return true;
+            },
+        );
+
+        $loop->runOn($terminal, idleMicroseconds: 2000, maxTicks: 12, escapeTimeoutMicroseconds: 500);
+
+        self::assertNotContains(
+            "\033q",
+            $seen,
+            'A lone escape was merged with the next key instead of being flushed.',
+        );
+    }
+
+    /**
+     * @param list<string> $script
+     *
+     * @return list<string> the NORMALISED keys handleKey saw, in hex
+     */
+    private function keysFrom(array $script): array
+    {
+        $registry = new TuiNodeRendererRegistry();
+        $registry->register(new TextRenderer());
+        $seen = [];
+
+        $loop = new RetainedTuiLoop(
+            new RetainedTuiRenderer(new SimpleTuiLayoutEngine(), $registry),
+            fn (): TuiNode => new TuiNode('root', 'box', children: [
+                new TuiNode('a', 'text', props: ['text' => $this->label]),
+            ]),
+            ['a'],
+            'a',
+            40,
+            6,
+            true,
+            static function (string $key) use (&$seen): bool {
+                $seen[] = bin2hex($key);
+
+                return true;
+            },
+        );
+
+        $loop->runOn(new FakeTerminal($script), idleMicroseconds: 0, maxTicks: 20);
+
+        return $seen;
+    }
+
+    public function testAnEscapeSequenceSplitAcrossReadsIsReassembled(): void
+    {
+        // This is what InputBuffer exists for: a terminal is free to deliver
+        // half a CSI now and half on the next read. Every split of the same
+        // sequence has to produce the same key.
+        $whole = $this->keysFrom(["\033[A", 'q']);
+
+        self::assertSame(['7570'], $whole, 'A whole CSI must arrive as one key — normalised to up.');
+        self::assertSame($whole, $this->keysFrom(["\033", '[A', 'q']), 'Split after ESC.');
+        self::assertSame($whole, $this->keysFrom(["\033[", 'A', 'q']), 'Split before the final byte.');
+        self::assertSame($whole, $this->keysFrom(["\033", '[', 'A', 'q']), 'Split byte by byte.');
+    }
+
+    public function testAnIdleTickDoesNotDestroyASequenceStillArriving(): void
+    {
+        // The regression this slice exists to catch: flushing on ANY idle tick
+        // emits the ESC as Escape and throws away the rest of the sequence.
+        // A fragment that is still arriving is not an abandoned Escape — only
+        // elapsed time tells them apart.
+        self::assertSame(
+            ['7570'],
+            $this->keysFrom(["\033", '', '[A', 'q']),
+            'An idle tick between fragments destroyed the sequence.',
+        );
+    }
+
     private function resizingLoop(array $keys, ?FakeTerminal &$terminal, int $w, int $h, int $newW, int $newH): RetainedTuiLoop
     {
         $registry = new TuiNodeRendererRegistry();

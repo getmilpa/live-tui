@@ -71,6 +71,29 @@ final class InteractiveTuiLoopTest extends TestCase
         return $longest;
     }
 
+    /**
+     * @param list<string> $script
+     * @return list<string> everything the terminal was asked to write
+     */
+    private function writesFrom(array $script): array
+    {
+        $terminal = new FakeTerminal($script);
+        $this->loop()->runOn($terminal, idleMicroseconds: 0);
+
+        return array_values(array_filter($terminal->writes, static fn (string $w): bool => $w !== ''));
+    }
+
+    public function testAnEscapeSequenceSplitAcrossReadsIsNotTurnedIntoGarbage(): void
+    {
+        // The three-byte assembler took the ESC, found nothing after it, and
+        // emitted it alone — then the '[' and the 'A' as separate literal keys.
+        // A fragmented arrow became Escape, bracket, letter.
+        $whole = $this->writesFrom(["\033[A", 'q']);
+
+        self::assertSame($whole, $this->writesFrom(["\033", '[A', 'q']), 'Split after ESC.');
+        self::assertSame($whole, $this->writesFrom(["\033", '[', 'A', 'q']), 'Split byte by byte.');
+    }
+
     private function loop(): InteractiveTuiLoop
     {
         $component = new class () implements ComponentDefinitionInterface {
