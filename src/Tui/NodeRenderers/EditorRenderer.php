@@ -169,7 +169,13 @@ final class EditorRenderer extends AbstractTuiNodeRenderer implements TuiNodeRen
         }
         $before = substr($output, 0, $pos);
         $row = substr_count($before, "\n");
-        $col = TuiString::visibleLength($before);
+
+        // Measured from the start of the caret's OWN row, not from the start of
+        // the frame. The loop adds the node's bounds.x to this column, so a
+        // column that counted every earlier row's cells too put the hardware
+        // cursor outside the editor — one row's width further right per row.
+        $lastBreak = strrpos($before, "\n");
+        $col = TuiString::visibleLength($lastBreak === false ? $before : substr($before, $lastBreak + 1));
 
         return [$row, $col];
     }

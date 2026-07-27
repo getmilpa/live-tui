@@ -164,8 +164,14 @@ final class TextInputRenderer extends AbstractTuiNodeRenderer implements TuiNode
             return null;
         }
         $before = substr($output, 0, $pos);
-        $col = TuiString::visibleLength($before);
         $row = substr_count($before, "\n");
+
+        // Measured from the start of the caret's own row. This renderer draws
+        // its caret on the first one today, so the two agree — but the contract
+        // is per-row, and matching {@see EditorRenderer} keeps a later layout
+        // change from turning a silent difference into a misplaced cursor.
+        $lastBreak = strrpos($before, "\n");
+        $col = TuiString::visibleLength($lastBreak === false ? $before : substr($before, $lastBreak + 1));
 
         return [$row, $col];
     }
