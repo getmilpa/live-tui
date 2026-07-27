@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/getmilpa/live-tui/compare/v0.2.2...v0.2.3) (2026-07-27)
+
+
+### Bug Fixes
+
+* assemble escape sequences the way a terminal actually delivers them ([#8](https://github.com/getmilpa/live-tui/issues/8)) ([89555e4](https://github.com/getmilpa/live-tui/commit/89555e4f0db7de7542b7deaf0ceb804693f1bb20))
+
 ## [0.2.2](https://github.com/getmilpa/live-tui/compare/v0.2.1...v0.2.2) (2026-07-27)
 
 
