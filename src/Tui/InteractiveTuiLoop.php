@@ -172,9 +172,14 @@ final class InteractiveTuiLoop
             static function (string $bytes) use (&$pushed): void {
                 $pushed .= $bytes;
             },
-            static function (): void {
+            function () use ($terminal): void {
+                $this->resizeTo($terminal->columns());
             },
         );
+
+        // Asked once at startup: the resize callback only fires on CHANGE, so a
+        // loop that never asks renders at its constructed width forever.
+        $this->resizeTo($terminal->columns());
 
         try {
             $this->paintTo($terminal);
@@ -211,6 +216,18 @@ final class InteractiveTuiLoop
         } finally {
             $terminal->stop();
         }
+    }
+
+    /**
+     * Adopts a new terminal width.
+     *
+     * There is no previous frame to forget here: this loop repaints in full on
+     * every key, so the next paint is already whole. Height is not tracked —
+     * what it renders is a flowing document, not a fixed grid.
+     */
+    public function resizeTo(int $width): void
+    {
+        $this->width = max(1, $width);
     }
 
     private function paintTo(TerminalInterface $terminal): void
