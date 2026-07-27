@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Milpa\Live\Tui;
 
 use Milpa\Live\Contracts\Tui\FocusManagerInterface;
+use Milpa\Live\Contracts\Tui\TerminalInterface;
 use Milpa\Live\ValueObjects\Tui\TuiBufferDiff;
 use Milpa\Live\ValueObjects\Tui\TuiNode;
 
@@ -192,6 +193,83 @@ final class RetainedTuiLoop
     }
 
     /**
+     * Bytes pushed by a terminal's `$onInput` callback and not yet consumed.
+     * Lets {@see self::runOn()} accept a push-style terminal without giving up
+     * its own tick.
+     */
+    private string $pushedInput = '';
+
+    /**
+     * Runs the loop against a {@see TerminalInterface} instead of raw streams.
+     *
+     * Same body as {@see self::run()} — tick, paint the diff, read a key,
+     * dispatch — with every terminal effect expressed through the contract:
+     * no `stty`, no `stream_isatty` gate, no escape sequences written by hand.
+     * That is what makes the interactive path drivable by a fake terminal, and
+     * therefore testable without one.
+     *
+     * @param int $idleMicroseconds How long to idle when a tick produced no key.
+     *                              Zero keeps a scripted run instantaneous.
+     */
+    public function runOn(TerminalInterface $terminal, int $idleMicroseconds = 100000): void
+    {
+        $this->previousBuffer = null;
+        $this->pushedInput = '';
+
+        $terminal->start(
+            function (string $bytes): void {
+                $this->pushedInput .= $bytes;
+            },
+            static function (): void {
+            },
+        );
+
+        try {
+            // Bracketed paste has to bracket the SESSION, not a frame: without
+            // MODE_BEGIN the terminal replays a paste as individual keystrokes
+            // and the detector never sees a paste at all.
+            if ($this->paste !== null) {
+                $terminal->write(BracketedPaste::MODE_BEGIN);
+            }
+
+            $terminal->clearScreen();
+            $terminal->hideCursor();
+
+            while ($this->running) {
+                $this->tick();
+
+                $frame = $this->nextFrameBytes();
+                if ($frame !== '') {
+                    $terminal->write($frame);
+                }
+
+                $chunk = $this->pushedInput . $terminal->pollInput();
+                $this->pushedInput = '';
+
+                $key = $this->consumeChunk($chunk);
+                if ($key !== '') {
+                    $this->dispatchKey($key);
+
+                    continue;
+                }
+
+                if ($idleMicroseconds > 0) {
+                    usleep($idleMicroseconds);
+                }
+            }
+        } finally {
+            if ($this->paste !== null) {
+                $terminal->write(BracketedPaste::MODE_END);
+            }
+
+            // No showCursor() here: TerminalInterface::stop() is documented to
+            // restore the terminal to how it was found, cursor included.
+            // Calling both emitted the escape twice.
+            $terminal->stop();
+        }
+    }
+
+    /**
      * Runs the loop against the given input and output streams, writing only the
      * rows each frame's diff reports as changed.
      *
@@ -202,50 +280,18 @@ final class RetainedTuiLoop
     {
         $input ??= STDIN;
         $output ??= STDOUT;
-        $isTty = function_exists('stream_isatty') && @stream_isatty($input);
-        $stty = null;
 
-        if (!$isTty) {
+        // Not a terminal (piped, redirected, a test): there is nothing to be
+        // interactive with, so emit one frame and leave. This stays here
+        // rather than in the contract because it is a fact about the STREAM,
+        // and only this entry point has one.
+        if (!function_exists('stream_isatty') || !@stream_isatty($input)) {
             fwrite($output, $this->renderScreen() . PHP_EOL);
 
             return;
         }
 
-        $stty = shell_exec('stty -g');
-        shell_exec('stty -icanon -echo min 0 time 0');
-        stream_set_blocking($input, false);
-
-        $this->previousBuffer = null;
-
-        // Enable bracketed-paste mode so the terminal wraps pastes in
-        // \x1b[200~ ... \x1b[201~ and we can treat them as a single event
-        // instead of replaying the content as keystrokes.
-        if ($this->paste !== null) {
-            fwrite($output, BracketedPaste::MODE_BEGIN);
-        }
-
-        try {
-            fwrite($output, "\033[2J\033[?25l");
-            while ($this->running) {
-                $this->tick();
-                $this->paintFrame($output);
-
-                $key = $this->readKey($input);
-                if ($key !== '') {
-                    $this->dispatchKey($key);
-                }
-
-                usleep(100000);
-            }
-        } finally {
-            if ($this->paste !== null) {
-                fwrite($output, BracketedPaste::MODE_END);
-            }
-            fwrite($output, "\033[?25h\033[0m" . PHP_EOL);
-            if (is_string($stty) && trim($stty) !== '') {
-                shell_exec('stty ' . escapeshellarg(trim($stty)));
-            }
-        }
+        $this->runOn(new StreamTerminal(null, $input, $output));
     }
 
     private function tick(): void
@@ -304,15 +350,30 @@ final class RetainedTuiLoop
      */
     public function paintFrame(mixed $output): void
     {
+        $bytes = $this->nextFrameBytes();
+        if ($bytes !== '') {
+            fwrite($output, $bytes);
+        }
+    }
+
+    /**
+     * Advances one frame and returns the bytes the terminal should receive —
+     * empty when nothing changed. This is where the retained property lives:
+     * the first frame is a full paint, an identical frame costs nothing, and
+     * any later frame carries only the rows the diff reported. Shared by
+     * {@see self::paintFrame()} (stream) and {@see self::runOn()} (terminal
+     * contract) so both paint from exactly the same computation.
+     */
+    public function nextFrameBytes(): string
+    {
         $buffer = $this->currentBuffer();
 
         if ($this->previousBuffer === null) {
             $bytes = "\033[H" . $this->paintLines($buffer->lines());
             $bytes .= $this->positionHardwareCursor();
-            fwrite($output, $this->sync->wrap($bytes));
             $this->previousBuffer = $buffer;
 
-            return;
+            return $this->sync->wrap($bytes);
         }
 
         $diff = $buffer->diff($this->previousBuffer);
@@ -320,16 +381,14 @@ final class RetainedTuiLoop
 
         if ($diff->isEmpty()) {
             $cursor = $this->positionHardwareCursor();
-            if ($cursor !== '') {
-                fwrite($output, $this->sync->wrap($cursor));
-            }
 
-            return;
+            return $cursor === '' ? '' : $this->sync->wrap($cursor);
         }
 
         $bytes = $this->paintDiff($diff);
         $bytes .= $this->positionHardwareCursor();
-        fwrite($output, $this->sync->wrap($bytes));
+
+        return $this->sync->wrap($bytes);
     }
 
     /**
@@ -389,9 +448,14 @@ final class RetainedTuiLoop
     private string $pendingInput = '';
 
     /**
-     * @param resource $input
+     * The whole of key assembly with no I/O in it: drains anything already
+     * complete, then feeds the chunk through {@see InputBuffer} (which holds
+     * partial escape sequences across reads and returns only complete ones)
+     * and the paste detector. Split out of {@see readKey()} so the same
+     * assembly can be driven from a stream or from a {@see TerminalInterface},
+     * which is the only difference between the two.
      */
-    private function readKey(mixed $input): string
+    private function consumeChunk(string $chunk): string
     {
         // Drain any pending complete sequences first.
         if ($this->pendingInput !== '') {
@@ -401,13 +465,7 @@ final class RetainedTuiLoop
             }
         }
 
-        // Read a chunk (up to 4096 bytes) and feed it to InputBuffer,
-        // which accumulates partial escape sequences and returns only
-        // complete ones. This replaces the old byte-at-a-time read
-        // that only handled 3-byte ESC sequences — InputBuffer knows
-        // how to assemble CSI/OSC/DCS/APC/SS3/Meta of any length.
-        $chunk = fread($input, 4096);
-        if (!is_string($chunk) || $chunk === '') {
+        if ($chunk === '') {
             return '';
         }
 
