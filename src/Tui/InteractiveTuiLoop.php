@@ -6,6 +6,7 @@ namespace Milpa\Live\Tui;
 
 use Milpa\Live\Contracts\Rendering\ComponentRendererRegistryInterface;
 use Milpa\Live\Contracts\Tui\FocusManagerInterface;
+use Milpa\Live\Contracts\Tui\TerminalInterface;
 use Milpa\Live\Contracts\Tui\TuiStateManagerInterface;
 use Milpa\Live\ValueObjects\InteractionRequest;
 use Milpa\Live\ValueObjects\RenderRequest;
@@ -135,8 +136,112 @@ final class InteractiveTuiLoop
     }
 
     /**
+     * Bytes already polled from the terminal and not yet turned into keys.
+     */
+    private string $pendingChunk = '';
+
+    /**
+     * Runs the loop against a {@see TerminalInterface} instead of raw streams.
+     *
+     * Two things had to change to get here, and both are the cost of this loop
+     * not being retained:
+     *
+     * 1. Key assembly reads from a CHUNK, not a stream. The byte-at-a-time
+     *    reads become slices off `$pendingChunk`, keeping the same three-byte
+     *    escape semantics this loop has always had.
+     * 2. Painting moved OUT of the top of the loop. Polling means many ticks
+     *    with no key, and this loop repaints in full — leaving the paint where
+     *    it was would redraw the whole screen on every idle tick.
+     *
+     * @param int $idleMicroseconds How long to idle when a tick produced no key.
+     */
+    public function runOn(TerminalInterface $terminal, int $idleMicroseconds = 100000): void
+    {
+        $pushed = '';
+        $terminal->start(
+            static function (string $bytes) use (&$pushed): void {
+                $pushed .= $bytes;
+            },
+            static function (): void {
+            },
+        );
+
+        try {
+            $this->paintTo($terminal);
+
+            while ($this->running) {
+                if ($this->pendingChunk === '') {
+                    $this->pendingChunk = $pushed . $terminal->pollInput();
+                    $pushed = '';
+                }
+
+                if ($this->pendingChunk === '') {
+                    // This is what atEndOfInput() exists for: telling "nothing
+                    // right now" apart from "nothing ever again". Without it a
+                    // finite stream would spin here forever.
+                    if ($terminal->atEndOfInput()) {
+                        break;
+                    }
+
+                    if ($idleMicroseconds > 0) {
+                        usleep($idleMicroseconds);
+                    }
+
+                    continue;
+                }
+
+                $key = $this->nextKeyFromChunk();
+                if ($key === '') {
+                    break;
+                }
+
+                $this->dispatchKey($key);
+                $this->paintTo($terminal);
+            }
+        } finally {
+            $terminal->stop();
+        }
+    }
+
+    private function paintTo(TerminalInterface $terminal): void
+    {
+        $terminal->clearScreen();
+        $terminal->write($this->renderScreen() . PHP_EOL);
+    }
+
+    /**
+     * The same three-byte escape handling {@see self::readKey()} does, taken
+     * off the pending chunk instead of off a stream.
+     */
+    private function nextKeyFromChunk(): string
+    {
+        if ($this->pendingChunk === '') {
+            return '';
+        }
+
+        $char = $this->pendingChunk[0];
+        $this->pendingChunk = substr($this->pendingChunk, 1);
+
+        if ($char !== "\033") {
+            return $char;
+        }
+
+        $sequence = $char;
+        for ($i = 0; $i < 2 && $this->pendingChunk !== ''; $i++) {
+            $sequence .= $this->pendingChunk[0];
+            $this->pendingChunk = substr($this->pendingChunk, 1);
+        }
+
+        return $sequence;
+    }
+
+    /**
      * Runs the loop against the given input and output streams until it is asked
      * to stop.
+     *
+     * Kept alongside {@see self::runOn()} rather than delegating to it: over a
+     * non-TTY this path deliberately emits no ANSI, and the terminal contract
+     * has no way to say "this surface takes no escape sequences".
      *
      * @param resource|null $input
      * @param resource|null $output

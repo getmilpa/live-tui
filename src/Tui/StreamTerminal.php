@@ -192,9 +192,7 @@ final class StreamTerminal implements TerminalInterface
      * Returns the current input byte chunk waiting on the input stream,
      * or `''` when nothing is pending. The loop polls this on each
      * tick; the method is intentionally non-blocking so a busy loop
-     * stays responsive. Outside the contract because callers are
-     * expected to go through the `$onInput` callback wired in
-     * {@see start()} — exposed here only for the loop's read loop.
+     * stays responsive.
      */
     public function pollInput(): string
     {
@@ -204,6 +202,15 @@ final class StreamTerminal implements TerminalInterface
         $chunk = fread($this->input, 4096);
 
         return is_string($chunk) ? $chunk : '';
+    }
+
+    /**
+     * True once the input stream is drained. A real terminal never reaches
+     * this: `feof()` on a TTY stays false for as long as the device is open.
+     */
+    public function atEndOfInput(): bool
+    {
+        return $this->input === null || feof($this->input);
     }
 
     /**

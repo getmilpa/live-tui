@@ -44,6 +44,31 @@ interface TerminalInterface
     public function write(string $data): void;
 
     /**
+     * Any input bytes waiting right now, or `''` when there are none. Never
+     * blocks.
+     *
+     * The contract carries BOTH input models on purpose. {@see self::start()}
+     * pushes bytes to its `$onInput` callback, which suits an event-driven
+     * host; a retained loop, which owns its own tick, needs to pull instead.
+     * Without this method a pulling loop has to reach past the contract to a
+     * concrete terminal's stream — which is exactly what kept the interactive
+     * loop untestable.
+     */
+    public function pollInput(): string;
+
+    /**
+     * Whether no further input will ever arrive.
+     *
+     * {@see self::pollInput()} returns `''` for "nothing waiting right now",
+     * which a loop that idles between ticks reads as "keep going". A loop whose
+     * exit condition is the end of its input needs to tell that apart from
+     * "the input is over" — and only the terminal knows which it is. A real
+     * terminal answers false for its whole life; one backed by a finite stream
+     * answers true once the stream is drained.
+     */
+    public function atEndOfInput(): bool;
+
+    /**
      * The terminal's current width in columns.
      */
     public function columns(): int;
