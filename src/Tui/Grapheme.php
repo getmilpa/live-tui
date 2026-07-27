@@ -14,6 +14,9 @@ declare(strict_types=1);
 
 namespace Milpa\Live\Tui;
 
+use IntlBreakIterator;
+use IntlChar;
+
 /**
  * Grapheme-aware string utilities. The PHP port of pi-tui's
  * `visibleWidth()` / `truncateToWidth()` / `wrapTextWithAnsi()`, plus

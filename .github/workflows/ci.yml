@@ -51,6 +51,6 @@ jobs:
           XDEBUG_MODE: coverage
         run: |
           vendor/bin/phpunit --testsuite LiveTui --coverage-text --coverage-clover=build/clover.xml
-          php tools/coverage-floor.php build/clover.xml 32
+          php tools/coverage-floor.php build/clover.xml 91
       - name: DocBlock coverage gate
         run: php tools/validate-docblocks.php
