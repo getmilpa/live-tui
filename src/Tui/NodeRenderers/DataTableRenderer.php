@@ -1,5 +1,15 @@
 <?php
 
+/**
+ * This file is part of Milpa Live TUI — the terminal transport layer (retained-mode runtime, ANSI painting, node rendering) of the Milpa PHP framework live component system.
+ *
+ * (c) Rodrigo Vicente - TeamX Agency — https://teamx.agency <hola@teamx.agency>
+ *
+ * @license Apache-2.0
+ *
+ * @link    https://github.com/getmilpa/live-tui
+ */
+
 declare(strict_types=1);
 
 namespace Milpa\Live\Tui\NodeRenderers;
@@ -184,7 +194,10 @@ final class DataTableRenderer extends AbstractTuiNodeRenderer implements TuiNode
         return array_values(array_filter($rows, static function (array $row) use ($columns, $needle): bool {
             $haystack = '';
             foreach ($columns as $col) {
-                $haystack .= ' ' . (string) ($row[$col['key']] ?? '');
+                // The same rendering the cell gets, or the filter would search
+                // text the user never sees: a false cell shows as "false" but
+                // contributed '' here, so filtering for it found nothing.
+                $haystack .= ' ' . self::cell($row[$col['key']] ?? null, array_key_exists($col['key'], $row));
             }
 
             return str_contains(mb_strtolower($haystack, 'UTF-8'), $needle);
@@ -228,7 +241,50 @@ final class DataTableRenderer extends AbstractTuiNodeRenderer implements TuiNode
             $row .= TuiString::padEnd($cell, $colWidths[$index] ?? 0) . ' │ ';
         }
 
-        return TuiString::padEnd(TuiString::truncate(rtrim($row, ' │ '), $width), $width);
+        return TuiString::padEnd(TuiString::truncate(self::withoutTrailingSeparator($row), $width), $width);
+    }
+
+    /**
+     * Strips the trailing column separator.
+     *
+     * `rtrim($row, ' │ ')` cannot do this: rtrim's second argument is a set of
+     * BYTES, and `│` is three of them (E2 94 82). Any cell value ending in one
+     * of those bytes gets eaten too — an em dash is E2 80 94, so rtrim ate its
+     * final 94 and left a broken E2 80 behind, which took the row's visible
+     * width to zero and blew its length past the frame.
+     */
+    private static function withoutTrailingSeparator(string $row): string
+    {
+        $separator = ' │ ';
+
+        while (str_ends_with($row, $separator)) {
+            $row = substr($row, 0, -strlen($separator));
+        }
+
+        return rtrim($row, ' ');
+    }
+
+    /**
+     * Renders one cell without losing what it was.
+     *
+     * A plain `(string)` cast destroys information a data table exists to
+     * show: PHP renders `false` as `''`, which is indistinguishable from
+     * `null`, from an empty string and from a column the row does not carry.
+     * Booleans and null get literal, language-free forms so the host — which
+     * owns the wording — can still override by passing strings of its own.
+     */
+    private static function cell(mixed $value, bool $present): string
+    {
+        if (!$present) {
+            return '';
+        }
+
+        return match (true) {
+            is_bool($value) => $value ? 'true' : 'false',
+            $value === null => '—',
+            is_scalar($value) => (string) $value,
+            default => '',
+        };
     }
 
     /**
@@ -244,7 +300,7 @@ final class DataTableRenderer extends AbstractTuiNodeRenderer implements TuiNode
         $rowOut = $marker . $check;
 
         foreach ($columns as $index => $col) {
-            $value = (string) ($row[$col['key']] ?? '');
+            $value = self::cell($row[$col['key']] ?? null, array_key_exists($col['key'], $row));
             $cellWidth = $colWidths[$index] ?? 0;
             $cell = TuiString::truncate($value, $cellWidth);
             $rowOut .= TuiString::padEnd($cell, $cellWidth) . ' │ ';
@@ -255,6 +311,6 @@ final class DataTableRenderer extends AbstractTuiNodeRenderer implements TuiNode
             $rowOut .= implode(' ', $actionLabels);
         }
 
-        return TuiString::padEnd(TuiString::truncate(rtrim($rowOut, ' │ '), $width), $width);
+        return TuiString::padEnd(TuiString::truncate(self::withoutTrailingSeparator($rowOut), $width), $width);
     }
 }
