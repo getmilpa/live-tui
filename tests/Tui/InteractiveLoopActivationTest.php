@@ -18,13 +18,11 @@ use Milpa\Live\Contracts\Component\ComponentDefinitionInterface;
 use Milpa\Live\Rendering\ComponentRendererRegistry;
 use Milpa\Live\Rendering\TuiComponentRenderer;
 use Milpa\Live\Tests\Fixtures\FakeTerminal;
+use Milpa\Live\Tests\Fixtures\RecordingDouble;
 use Milpa\Live\Tui\InteractiveTuiLoop;
 use Milpa\Live\Tui\TuiComponentInstance;
 use Milpa\Live\ValueObjects\ComponentContext;
 use Milpa\Live\ValueObjects\ComponentContract;
-use Milpa\Live\ValueObjects\InteractionRequest;
-use Milpa\Live\ValueObjects\InteractionResult;
-use Milpa\Live\ValueObjects\StateSnapshot;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -41,8 +39,7 @@ use PHPUnit\Framework\TestCase;
 final class InteractiveLoopActivationTest extends TestCase
 {
     /**
-     * A component double that answers to one contract and records every action
-     * the loop applies to it.
+     * A {@see RecordingDouble} answering to one contract.
      *
      * Each helper below builds its anonymous class at its own source location,
      * which is what gives each one a distinct `contract()` — two doubles built
@@ -592,55 +589,5 @@ final class InteractiveLoopActivationTest extends TestCase
 
         self::assertSame(12, mb_strlen($first));
         self::assertStringEndsWith('~', $first);
-    }
-}
-
-/**
- * The shared body of every double above: it records what the loop applies and
- * folds the payload into the state, so a second key sees the first one's work.
- *
- * @internal
- */
-abstract class RecordingDouble implements ComponentDefinitionInterface
-{
-    /** @var list<array{action: string, payload: array<string, mixed>}> */
-    public array $applied = [];
-
-    /**
-     * @param array<string, mixed> $data
-     * @param array<string, mixed> $meta
-     * @param array<string, mixed> $errors
-     */
-    public function __construct(
-        private readonly array $data = [],
-        private readonly array $meta = [],
-        private readonly array $errors = [],
-    ) {
-    }
-
-    public function mount(array $props, ComponentContext $context): StateSnapshot
-    {
-        return new StateSnapshot($context->componentId, static::contract()->name, '1.0.0', $this->data, $this->meta);
-    }
-
-    public function handle(InteractionRequest $request): InteractionResult
-    {
-        $this->applied[] = ['action' => $request->action, 'payload' => $request->payload];
-
-        $data = $request->state->data;
-        foreach ($request->payload as $key => $value) {
-            $data[$key] = $value;
-        }
-
-        return new InteractionResult(
-            new StateSnapshot(
-                $request->state->componentId,
-                $request->state->componentName,
-                $request->state->version,
-                $data,
-                $request->state->meta,
-            ),
-            errors: $this->errors,
-        );
     }
 }
