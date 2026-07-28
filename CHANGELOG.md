@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0](https://github.com/getmilpa/live-tui/compare/v0.2.3...v0.3.0) (2026-07-28)
+
+
+### Features
+
+* accept milpa/live ^0.2 ([c802b76](https://github.com/getmilpa/live-tui/commit/c802b7642e2a3100d39adb34d23a6df4d5f1b19e))
+
+
+### Bug Fixes
+
+* Grapheme nunca usaba intl — los dos usos eran inalcanzables ([dfb636a](https://github.com/getmilpa/live-tui/commit/dfb636a9cd9350f83c41f881a66bb6970154ab2f))
+* la columna del cursor se mide desde su propio renglón ([98f1ef4](https://github.com/getmilpa/live-tui/commit/98f1ef4ade38b13f6611c02b7d37609d2ea793ba))
+* los loops preguntan a KeyMatcher qué tecla es, en vez de a una tabla propia ([cf02a72](https://github.com/getmilpa/live-tui/commit/cf02a72523ba66db9241231548d3d32a12798094))
+* un componente que rechaza una acción ya no reporta éxito ([884a71e](https://github.com/getmilpa/live-tui/commit/884a71e77388f986d905cde926a6d77c44206a53))
+
 ## [0.2.3](https://github.com/getmilpa/live-tui/compare/v0.2.2...v0.2.3) (2026-07-27)
 
 
