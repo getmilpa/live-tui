@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/getmilpa/live-tui/compare/v0.3.0...v0.3.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* accept milpa/live ^0.4, which this package already required and nobody could install ([d8e8e17](https://github.com/getmilpa/live-tui/commit/d8e8e171ff1ca24534f3e7f40aadf597df75787c))
+
 ## [0.3.0](https://github.com/getmilpa/live-tui/compare/v0.2.3...v0.3.0) (2026-07-28)
 
 
