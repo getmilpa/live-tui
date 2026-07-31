@@ -46,6 +46,12 @@ final class RetainedTuiLoop
      */
     private ?VirtualTerminalBuffer $previousBuffer = null;
 
+    /** Lo último que llegó por {@see self::dispatchKey()}, sin normalizar. */
+    private string $lastRawKey = '';
+
+    /** @var list<string> */
+    private readonly array $quitKeys;
+
     private readonly \Closure $rootFactory;
 
     private readonly ?\Closure $handleKey;
@@ -63,6 +69,11 @@ final class RetainedTuiLoop
      * @param null|callable(self): void         $tick
      * @param null|SynchronizedOutput           $sync        Synchronized-output wrapper for atomic writes; defaults to enabled.
      * @param null|BracketedPaste               $paste       Bracketed-paste detector; defaults to null (no paste detection).
+     * @param list<string>                      $quitKeys    Keys that stop the loop. The default keeps `q`, which a
+     *                                                       dashboard wants and a FORM cannot afford: a screen with a text
+     *                                                       field would swallow every `q` somebody typed, and there was no
+     *                                                       way to opt out. A screen that captures text passes
+     *                                                       `['escape', 'ctrl+c']`.
      */
     public function __construct(
         private readonly RetainedTuiRenderer $renderer,
@@ -77,7 +88,9 @@ final class RetainedTuiLoop
         private readonly ?TuiAnsiPainter $painter = null,
         ?SynchronizedOutput $sync = null,
         ?BracketedPaste $paste = null,
+        array $quitKeys = ['q', 'escape', 'ctrl+c'],
     ) {
+        $this->quitKeys = $quitKeys;
         $this->rootFactory = \Closure::fromCallable($rootFactory);
         $this->handleKey = $handleKey !== null ? \Closure::fromCallable($handleKey) : null;
         $this->tick = $tick !== null ? \Closure::fromCallable($tick) : null;
@@ -168,14 +181,38 @@ final class RetainedTuiLoop
      * Routes a key through the shortcut registry and the key handler, returning
      * whether it was consumed.
      */
+    /**
+     * La tecla TAL CUAL llegó, antes de normalizarse — sólo para quien captura texto.
+     *
+     * `dispatchKey()` entrega el nombre canónico, que es minúscula para un carácter suelto: un atajo
+     * declarado como `l` tiene que casar aunque se teclee con shift. Eso es correcto para un atajo y
+     * hace imposible un campo de texto — con sólo el nombre, `MarketingPlugin` no se puede escribir.
+     *
+     * Así que el crudo queda disponible en vez de cambiar la normalización: cambiarla haría que
+     * `$key === 'l'` dejara de casar con `L` en todos los handlers que ya existen, para arreglar un
+     * caso que sólo le importa a quien captura texto.
+     */
+    public function lastRawKey(): string
+    {
+        return $this->lastRawKey;
+    }
+
+    /**
+     * Feeds one key into the loop: quit keys stop it, Tab moves focus, and everything else goes to
+     * the screen's own handler.
+     *
+     * Returns whether the loop is still running, so a caller driving it by hand knows when to stop.
+     */
     public function dispatchKey(string $key): bool
     {
+        $this->lastRawKey = $key;
+
         $key = $this->normalizeKey($key);
         if ($key === '') {
             return $this->running;
         }
 
-        if (in_array($key, ['q', 'escape', 'ctrl+c'], true)) {
+        if (in_array($key, $this->quitKeys, true)) {
             $this->running = false;
 
             return false;
