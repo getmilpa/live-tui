@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/getmilpa/live-tui/compare/v0.3.1...v0.4.0) (2026-07-31)
+
+
+### Features
+
+* a screen that captures text can choose its own quit keys, and see the raw one ([562a590](https://github.com/getmilpa/live-tui/commit/562a590af08a15089c3dbd3f62787c636b212d76))
+
 ## [0.3.1](https://github.com/getmilpa/live-tui/compare/v0.3.0...v0.3.1) (2026-07-29)
 
 
