@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/getmilpa/live-tui/compare/v0.4.0...v0.4.1) (2026-08-01)
+
+
+### Bug Fixes
+
+* **deps:** el pin de milpa/core acepta la linea 0.7 ([241a56a](https://github.com/getmilpa/live-tui/commit/241a56a4e3a6cab62cc1989151aa5948d59b45e6))
+
 ## [0.4.0](https://github.com/getmilpa/live-tui/compare/v0.3.1...v0.4.0) (2026-07-31)
 
 
