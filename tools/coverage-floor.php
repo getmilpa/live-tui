@@ -8,6 +8,11 @@
  * @license Apache-2.0
  *
  * @link    https://github.com/getmilpa/live-tui
+ *
+ * NOTA DE ESTE PAQUETE, movida aquí desde el cuerpo compartido: veinte de los veintitrés renderers
+ * que publica no los había ejecutado ninguna prueba, y así se ve desde afuera cuando nadie lee el
+ * número. Se conserva porque es un hecho sobre este paquete; vivía en el cuerpo de la herramienta,
+ * que es la regla común, y ahí hacía que las 33 copias dejaran de ser una sola regla.
  */
 
 declare(strict_types=1);
@@ -21,9 +26,7 @@ declare(strict_types=1);
  *
  * It exists because the measurement was in the toolchain all along with nothing
  * switching it on: xdebug installed, `<source>` declared in phpunit.xml, and
- * `coverage: none` in CI. Twenty of the twenty-three renderers this package
- * publishes had never been executed by any test, and that is what it looks like
- * from the outside when nobody is reading the number.
+ * `coverage: none` in CI. A number nobody reads is a number nobody defends.
  *
  * Usage: php tools/coverage-floor.php <clover.xml> <floor-percent>
  */
