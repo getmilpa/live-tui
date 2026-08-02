@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/getmilpa/live-tui/compare/v0.4.1...v0.5.0) (2026-08-02)
+
+
+### Features
+
+* a retained loop can forget what it believes is on screen ([52c5187](https://github.com/getmilpa/live-tui/commit/52c518747178ae3816d1178c5d4cc67defd711e9))
+
 ## [0.4.1](https://github.com/getmilpa/live-tui/compare/v0.4.0...v0.4.1) (2026-08-01)
 
 
