@@ -409,6 +409,26 @@ final class RetainedTuiLoop
         $this->previousBuffer = null;
     }
 
+    /**
+     * Olvida lo que cree que hay en pantalla, y repinta todo en el siguiente frame.
+     *
+     * ── POR QUÉ HACE FALTA, Y POR QUÉ NO BASTA CON NO ENSUCIAR ──────────────────────────────────
+     *
+     * Este bucle pinta un DIFF contra {@see $previousBuffer} y sólo emite las filas que cambiaron.
+     * Es lo que lo hace rápido y es también su fragilidad: si ALGUIEN MÁS escribe en la terminal —un
+     * aviso de PHP, un `echo` olvidado en un plugin, una deprecación de una dependencia— el buffer
+     * interno deja de describir lo que hay, y como esas filas «no cambiaron» **nunca se vuelven a
+     * pintar**. Una sola línea ajena deja la pantalla rota para el resto de la sesión.
+     *
+     * El host evita la contaminación donde puede (apagando `display_errors`, mandando su logger al
+     * log), pero no puede evitarla toda: el código de un tercero no lo consulta. Esto es la otra
+     * mitad — poder RECUPERARSE de lo que no se pudo evitar.
+     */
+    public function repintarTodo(): void
+    {
+        $this->previousBuffer = null;
+    }
+
     private function tick(): void
     {
         if ($this->tick !== null) {
