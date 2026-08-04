@@ -21,18 +21,26 @@ use Milpa\Live\ValueObjects\Tui\TuiNode;
 use Milpa\Live\ValueObjects\Tui\TuiRenderContext;
 
 /**
- * Compact status pill: `[label]` colored by the node's semantic role.
- * The TUI analog of a badge/tag chip in a web UI. Single-line by design;
- * the label is truncated to fit the node width minus the brackets so the
- * closing `]` is never dropped. Color is NOT applied here — the final
- * `TuiAnsiPainter` pass picks up the `role` from props and styles it via
- * the `TerminalThemeInterface`. This keeps the renderer pure text so it
- * composes cleanly with the diff buffer.
+ * Compact status pill: `[label]`, the TUI analog of a badge chip in a web UI.
  *
- * Node props (all optional):
- *  - `label` string  Text inside the badge. Default: ''.
- *  - `role`  string  Semantic role for the theme pass: 'success' | 'warning' | 'error' | 'info' | 'neutral'. Default: 'neutral'.
- *  - `fill`  string  Bracket character set: 'square' (`[ ]`), 'round' (`( )`), 'angle' (`< >`). Default: 'square'.
+ * Single-line by design; the label is truncated to fit the node width minus the
+ * brackets so the closing `]` is never dropped.
+ *
+ * ── EL COLOR NO SE APLICA AQUÍ, Y NO SALE DE LOS PROPS ──────────────────────
+ *
+ * Lo pone `TuiAnsiPainter` al final, y lo DEDUCE del texto entre corchetes:
+ * `ready`/`done` → success, `error`/`failed` → error, `claude|gpt|gemini` →
+ * azul, el resto → accent. Este renderer emite texto plano, como toda la capa
+ * (*«TuiString's contract is plain text, not styled output»*).
+ *
+ * La versión anterior de este bloque decía que el pintor «toma el `role` de los
+ * props». Era falso, y costó: quien fue a implementar el color por actor buscó
+ * un camino que no existe. Una descripción que promete un mecanismo inexistente
+ * es peor que ninguna — la ausencia se nota, la mentira no.
+ *
+ * Props:
+ *  - `label` string  Texto de la píldora. Default: ''.
+ *  - `fill`  string  Relleno del contorno. Default: 'square'.
  */
 final class BadgeRenderer extends AbstractTuiNodeRenderer implements TuiNodeRendererInterface
 {

@@ -365,4 +365,57 @@ final class TextEngineTest extends TestCase
     {
         self::assertNotSame('', (new TerminalTheme())->symbol('progress-fill'));
     }
+
+    /**
+     * QUIÉN HABLA SE VE, Y EL MODELO NO PUEDE IMITARLO (spec-lenguaje-visual-tui.md).
+     *
+     * El 2026-08-04 el modelo repitió de su ventana el texto de una pregunta de permiso y en pantalla
+     * se veía igual que una pausa real del sistema. El modelo puede escribir cualquier frase; lo que
+     * no puede es ponerse el marcador, porque no sale de su texto sino de quién produjo el nodo.
+     *
+     * Éste es el falsificador que la spec declara: si las dos salen iguales, la spec falló.
+     */
+    public function testTheModelCannotImpersonateTheSystem(): void
+    {
+        $pintor = new TuiAnsiPainter();
+
+        $delSistema = $pintor->paint(['│ ■ ⏸ El agente quiere correr «plugins.disable». ¿Lo autorizas?  │']);
+        // La MISMA frase, escrita por el modelo: llega sin marcador porque no es suya la marca.
+        $delModelo = $pintor->paint(['│   ⏸ El agente quiere correr «plugins.disable». ¿Lo autorizas?  │']);
+
+        self::assertNotSame(
+            TuiString::stripAnsi($delSistema),
+            TuiString::stripAnsi($delModelo),
+            'el marcador distingue las dos aunque la frase sea idéntica',
+        );
+        self::assertNotSame($delSistema, $delModelo, 'y el color también');
+        self::assertStringContainsString('■', $delSistema);
+        self::assertStringNotContainsString('■', $delModelo, 'el modelo no puede fabricar el marcador del sistema');
+    }
+
+    /** Cada actor sale con su propio color, y el modelo con el suyo por ausencia de marca. */
+    public function testEachActorGetsItsOwnColour(): void
+    {
+        $pintor = new TuiAnsiPainter();
+
+        $pintadas = array_map(
+            static fn (string $l): string => (new TuiAnsiPainter())->paint([$l]),
+            [
+                '│ › deshabilita el plugin HelloPlugin   │',
+                '│ ■ ✓ contestado · autorizado           │',
+                '│ └ ⏸ (sub-agente j.sub-ab12) ¿autorizas? │',
+            ],
+        );
+
+        self::assertCount(3, array_unique($pintadas), 'tres actores, tres pintados distintos');
+        foreach ($pintadas as $linea) {
+            self::assertStringContainsString("\033[", $linea, 'cada uno lleva color');
+        }
+
+        // Y SIN COLOR EL LENGUAJE SOBREVIVE: los marcadores son texto, así que un `| cat` conserva
+        // quién habló. Por eso el origen se marca con glifo y no sólo con tono.
+        foreach (['›', '■', '└'] as $i => $marca) {
+            self::assertStringContainsString($marca, TuiString::stripAnsi($pintadas[$i]));
+        }
+    }
 }

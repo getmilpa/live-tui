@@ -60,6 +60,32 @@ final readonly class TuiAnsiPainter
                 . "\033[0m";
         }
 
+        // ── QUIÉN HABLA, ANTES QUE NADA (spec-lenguaje-visual-tui.md) ─────────────────────────
+        //
+        // El marcador de actor va al inicio de la línea de contenido y aquí se traduce a color. Se
+        // resuelve ANTES que los badges porque una línea del sistema puede traer corchetes adentro y
+        // el borde de rol tiene que envolverla entera.
+        //
+        // NO ES ESTÉTICA. El 2026-08-04 el modelo repitió de su ventana el texto de una pregunta de
+        // permiso y en pantalla se veía igual que una pausa real del sistema. El modelo puede escribir
+        // cualquier frase; lo que no puede es ponerse el marcador, porque no sale de su texto sino de
+        // quién produjo el nodo. Con esto, imitar al sistema deja de ser posible con prosa.
+        //
+        // `default` —sin marcador— es el modelo, y es deliberado: se marca lo que NO es suyo.
+        // El borde es OPCIONAL: la conversación del chat se pinta sin caja, y exigir `│` dejaba el
+        // marcador sin color justo donde más importa — se vio en tmux, con el `■` en blanco.
+        if (preg_match('/^(│?\s*)([›■└])(\s.*)$/u', $line, $actor) === 1) {
+            $rol = match ($actor[2]) {
+                '›' => 'azul',
+                '■' => 'accent',
+                default => 'muted',
+            };
+
+            return $this->theme->style($actor[1], 'muted')
+                . $this->theme->style($actor[2] . $actor[3], $rol)
+                . "\033[0m";
+        }
+
         // Resolve bracket badges before adding any ANSI. Otherwise the `[`
         // in an SGR escape can pair with a later `]` in user text and corrupt
         // both the escape and the visible content.
