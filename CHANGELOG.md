@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/getmilpa/live-tui/compare/v0.5.0...v0.6.0) (2026-08-04)
+
+
+### Features
+
+* **tui:** el pintor traduce el marcador de actor a color ([12c36c3](https://github.com/getmilpa/live-tui/commit/12c36c3212a392e60640397d68c38d06b75fa3ac))
+
 ## [0.5.0](https://github.com/getmilpa/live-tui/compare/v0.4.1...v0.5.0) (2026-08-02)
 
 
