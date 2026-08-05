@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/getmilpa/live-tui/compare/v0.6.0...v0.7.0) (2026-08-05)
+
+
+### Features
+
+* **tui:** los renderers saben decir cuánto van a medir ([f1b04a1](https://github.com/getmilpa/live-tui/commit/f1b04a14466b51b330d5d37bb15fd717f7a93157))
+
 ## [0.6.0](https://github.com/getmilpa/live-tui/compare/v0.5.0...v0.6.0) (2026-08-04)
 
 
