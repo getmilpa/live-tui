@@ -15,6 +15,7 @@ declare(strict_types=1);
 namespace Milpa\Live\Tui\NodeRenderers;
 
 use Milpa\Live\Contracts\Tui\FocusableInterface;
+use Milpa\Live\Contracts\Tui\MeasurableTuiNodeRendererInterface;
 use Milpa\Live\Contracts\Tui\TuiNodeRendererInterface;
 use Milpa\Live\Tui\TuiString;
 use Milpa\Live\ValueObjects\Tui\TuiFrame;
@@ -44,7 +45,10 @@ use Milpa\Live\ValueObjects\Tui\TuiRenderContext;
  *  - `prompt`      string Prefix before the input (e.g. '> ' or '$ '). Default: ''.
  *  - `focused`     bool   Override focus state (otherwise read from context). Default: context.focused().
  */
-final class TextInputRenderer extends AbstractTuiNodeRenderer implements TuiNodeRendererInterface, FocusableInterface
+final class TextInputRenderer extends AbstractTuiNodeRenderer implements
+    TuiNodeRendererInterface,
+    FocusableInterface,
+    MeasurableTuiNodeRendererInterface
 {
     private const CURSOR_GLYPH = '█';
 
@@ -58,11 +62,59 @@ final class TextInputRenderer extends AbstractTuiNodeRenderer implements TuiNode
     }
 
     /**
+     * How many rows this input needs at `$width`.
+     *
+     * One, unless `multiline` is on — then as many as the value wraps to, capped by `maxLines`.
+     * The cap matters: without it, pasting a paragraph would push everything else off the screen,
+     * and the field would eat the very conversation it is answering.
+     */
+    public function measureHeight(TuiNode $node, int $width): int
+    {
+        if (!(bool) ($node->props['multiline'] ?? false)) {
+            return 1;
+        }
+
+        $tope = max(1, (int) ($node->props['maxLines'] ?? 6));
+
+        return max(1, min($tope, \count($this->renglones($node, $width))));
+    }
+
+    /**
+     * The value broken into the rows it occupies — prompt included on the first one.
+     *
+     * The prompt is part of the wrapping and not a decoration added afterwards: it takes real
+     * columns from the first row, and wrapping without it would make that row one word too long,
+     * which is only visible once someone types a long enough sentence.
+     *
+     * @return list<string>
+     */
+    private function renglones(TuiNode $node, int $width): array
+    {
+        $value = (string) ($node->props['value'] ?? '');
+        $prompt = (string) ($node->props['prompt'] ?? '');
+        $texto = $prompt . $value;
+        if ($texto === '') {
+            return [''];
+        }
+
+        return explode("\n", TuiString::wordwrap($texto, max(1, $width)));
+    }
+
+    /**
      * Draws the visible window of the value with the fake caret, scrolling
      * horizontally when the value is wider than the bounds.
+     *
+     * In `multiline` mode it wraps instead: the field grows downward in its own box, which — sitting
+     * under the conversation in a vertical stack — reads as growing UPWARD, because every row it
+     * takes is a row the conversation gives up. That is what a textarea does, and the third
+     * affordance of a question is «write my own answer», which is the one that least fits in a line.
      */
     public function render(TuiNode $node, TuiRenderContext $context): TuiFrame
     {
+        if ((bool) ($node->props['multiline'] ?? false)) {
+            return $this->renderMultiline($node, $context);
+        }
+
         $value = (string) ($node->props['value'] ?? '');
         $cursor = (int) ($node->props['cursor'] ?? TuiString::visibleLength($value));
         $placeholder = (string) ($node->props['placeholder'] ?? '');
@@ -92,6 +144,45 @@ final class TextInputRenderer extends AbstractTuiNodeRenderer implements TuiNode
         }
 
         return $this->frame($width, $context->bounds->height, $rows);
+    }
+
+    /**
+     * El campo envuelto, con el cursor al final y la COLA visible si no cabe entero.
+     *
+     * Se conserva el final y no el principio porque el cursor está ahí: un campo que enseña lo que
+     * ya no se está escribiendo, y esconde lo que sí, es un campo que no sirve para escribir.
+     */
+    private function renderMultiline(TuiNode $node, TuiRenderContext $context): TuiFrame
+    {
+        $width = $context->bounds->width;
+        $alto = max(1, $context->bounds->height);
+        $focused = (bool) ($node->props['focused'] ?? $context->focused($node));
+        $placeholder = (string) ($node->props['placeholder'] ?? '');
+        $value = (string) ($node->props['value'] ?? '');
+
+        $renglones = $value === '' && $placeholder !== ''
+            ? explode("\n", TuiString::wordwrap((string) ($node->props['prompt'] ?? '') . $placeholder, max(1, $width)))
+            : $this->renglones($node, $width);
+
+        if ($focused) {
+            $ultimo = \count($renglones) - 1;
+            $renglones[$ultimo] = $renglones[$ultimo] . '▏';
+        }
+
+        // La cola, no la cabeza: donde está el cursor.
+        if (\count($renglones) > $alto) {
+            $renglones = \array_slice($renglones, -$alto);
+        }
+
+        $filas = array_map(
+            static fn (string $l): string => TuiString::padEnd(TuiString::truncate($l, $width), $width),
+            $renglones,
+        );
+        while (\count($filas) < $alto) {
+            $filas[] = str_repeat(' ', $width);
+        }
+
+        return $this->frame($width, $alto, $filas);
     }
 
     /** @return array{text: string, cursor: int} */

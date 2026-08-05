@@ -14,6 +14,7 @@ declare(strict_types=1);
 
 namespace Milpa\Live\Tui\NodeRenderers;
 
+use Milpa\Live\Contracts\Tui\MeasurableTuiNodeRendererInterface;
 use Milpa\Live\Contracts\Tui\TuiNodeRendererInterface;
 use Milpa\Live\Tui\TuiString;
 use Milpa\Live\ValueObjects\Tui\TuiFrame;
@@ -36,7 +37,9 @@ use Milpa\Live\ValueObjects\Tui\TuiRenderContext;
  *  - `paddingY` int    Vertical padding (rows, top + bottom). Default: 0.
  *  - `fill`     string  Background fill character for empty cells. Default: ' '.
  */
-final class TextRenderer extends AbstractTuiNodeRenderer implements TuiNodeRendererInterface
+final class TextRenderer extends AbstractTuiNodeRenderer implements
+    TuiNodeRendererInterface,
+    MeasurableTuiNodeRendererInterface
 {
     /**
      * True only for `text` nodes — dispatch is by declared node
@@ -48,21 +51,48 @@ final class TextRenderer extends AbstractTuiNodeRenderer implements TuiNodeRende
     }
 
     /**
+     * How many rows this text needs at `$width` — the same lines `render()` would produce.
+     *
+     * It goes through `lineas()`, the one place that decides where the text breaks. Counting it
+     * here with a second wrap would agree with `render()` right up until someone changed one of
+     * them, and the disagreement would show as text quietly missing from a screen.
+     */
+    public function measureHeight(TuiNode $node, int $width): int
+    {
+        $paddingY = (int) ($node->props['paddingY'] ?? 0);
+
+        return \count($this->lineas($node, $width)) + ($paddingY * 2);
+    }
+
+    /**
+     * The text broken into the lines it will occupy at `$width` — before padding or alignment.
+     *
+     * @return list<string>
+     */
+    private function lineas(TuiNode $node, int $width): array
+    {
+        $content = (string) ($node->props['content'] ?? $node->props['text'] ?? '');
+        if ($content === '') {
+            return [];
+        }
+        $wrap = (bool) ($node->props['wrap'] ?? true);
+        $paddingX = (int) ($node->props['paddingX'] ?? $node->props['padding'] ?? 0);
+        $innerWidth = max(1, $width - ($paddingX * 2));
+
+        return explode("\n", $wrap ? TuiString::wordwrap($content, $innerWidth) : $content);
+    }
+
+    /**
      * Draws the wrapped, aligned and padded text within the bounds.
      */
     public function render(TuiNode $node, TuiRenderContext $context): TuiFrame
     {
-        $content = (string) ($node->props['content'] ?? $node->props['text'] ?? '');
-        $wrap = (bool) ($node->props['wrap'] ?? true);
         $align = (string) ($node->props['align'] ?? 'left');
         $paddingX = (int) ($node->props['paddingX'] ?? $node->props['padding'] ?? 0);
         $paddingY = (int) ($node->props['paddingY'] ?? 0);
 
         $innerWidth = max(1, $context->bounds->width - ($paddingX * 2));
-        $text = $wrap && $content !== ''
-            ? TuiString::wordwrap($content, $innerWidth)
-            : $content;
-        $rawLines = $content === '' ? [] : explode("\n", $text);
+        $rawLines = $this->lineas($node, $context->bounds->width);
 
         $lines = [];
         for ($i = 0; $i < $paddingY; $i++) {

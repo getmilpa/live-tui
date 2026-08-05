@@ -14,6 +14,7 @@ declare(strict_types=1);
 
 namespace Milpa\Live\Tui\NodeRenderers;
 
+use Milpa\Live\Contracts\Tui\MeasurableTuiNodeRendererInterface;
 use Milpa\Live\Contracts\Tui\TuiNodeRendererInterface;
 use Milpa\Live\Tui\TuiString;
 use Milpa\Live\ValueObjects\Tui\TuiFrame;
@@ -45,7 +46,9 @@ use Milpa\Live\ValueObjects\Tui\TuiRenderContext;
  *  - `scrollToBottom` bool Anchor overflowing content to the latest lines. Default: false.
  *  - `scrollFromBottom` int Lines to move back from the latest viewport. Default: 0.
  */
-final class MarkdownRenderer extends AbstractTuiNodeRenderer implements TuiNodeRendererInterface
+final class MarkdownRenderer extends AbstractTuiNodeRenderer implements
+    TuiNodeRendererInterface,
+    MeasurableTuiNodeRendererInterface
 {
     /**
      * True only for `markdown` nodes — dispatch is by declared node
@@ -59,6 +62,47 @@ final class MarkdownRenderer extends AbstractTuiNodeRenderer implements TuiNodeR
     /**
      * Parses the `text` prop and returns the rendered block lines.
      */
+    /**
+     * How many rows this markdown needs at `$width` — the same lines `render()` would produce.
+     *
+     * Markdown does not wrap like plain text: a heading gains an underline, a list gains bullets and
+     * hanging indents, a quote gains a bar. Counting it from the source string would be a guess, and
+     * the guess would be low exactly where the content is richest.
+     */
+    public function measureHeight(TuiNode $node, int $width): int
+    {
+        $paddingY = (int) ($node->props['paddingY'] ?? 0);
+
+        return \count($this->lineas($node, $width)) + ($paddingY * 2);
+    }
+
+    /**
+     * The blocks rendered to the lines they occupy at `$width` — before padding or scrolling.
+     *
+     * @return list<string>
+     */
+    private function lineas(TuiNode $node, int $width): array
+    {
+        $content = (string) ($node->props['content'] ?? $node->props['text'] ?? '');
+        $paddingX = (int) ($node->props['paddingX'] ?? $node->props['padding'] ?? 0);
+        $wrap = (bool) ($node->props['wrap'] ?? true);
+        $innerWidth = max(1, $width - ($paddingX * 2));
+
+        $lines = [];
+        foreach ($this->parse($content) as $block) {
+            $lines = array_merge($lines, $this->renderBlock($block, $innerWidth, $wrap));
+        }
+
+        return array_values($lines);
+    }
+
+    /**
+     * Draws the parsed blocks within the bounds, scrolling to the tail when asked.
+     *
+     * It goes through `lineas()`, the one place that turns markdown into rows — the same one
+     * `measureHeight()` uses. Two paths would agree until somebody edited one, and the disagreement
+     * would show as text quietly missing from a screen.
+     */
     public function render(TuiNode $node, TuiRenderContext $context): TuiFrame
     {
         $content = (string) ($node->props['content'] ?? $node->props['text'] ?? '');
@@ -70,12 +114,7 @@ final class MarkdownRenderer extends AbstractTuiNodeRenderer implements TuiNodeR
         $width = $context->bounds->width;
         $height = $context->bounds->height;
 
-        $innerWidth = max(1, $width - ($paddingX * 2));
-        $blocks = $this->parse($content);
-        $lines = [];
-        foreach ($blocks as $block) {
-            $lines = array_merge($lines, $this->renderBlock($block, $innerWidth, $wrap));
-        }
+        $lines = $this->lineas($node, $width);
 
         $padded = [];
         for ($i = 0; $i < $paddingY; $i++) {
