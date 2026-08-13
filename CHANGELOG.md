@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/getmilpa/live-tui/compare/v0.7.0...v0.7.1) (2026-08-13)
+
+
+### Bug Fixes
+
+* Home and End are recognised however the terminal sends them ([#18](https://github.com/getmilpa/live-tui/issues/18)) ([0d10bfc](https://github.com/getmilpa/live-tui/commit/0d10bfc5bcfb8f3327496c3a1e977cc3bbcce27e))
+
 ## [0.7.0](https://github.com/getmilpa/live-tui/compare/v0.6.0...v0.7.0) (2026-08-05)
 
 
