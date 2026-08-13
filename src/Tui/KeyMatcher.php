@@ -65,8 +65,18 @@ final class KeyMatcher
             "\033[B" => 'down',
             "\033[C" => 'right',
             "\033[D" => 'left',
-            "\033[H" => 'home',
-            "\033[F" => 'end',
+            // HOME Y END LLEGAN EN DOS FORMAS, y sólo una estaba aquí.
+            //
+            // `CSI H`/`CSI F` es la que emiten algunos terminales; tmux, xterm y buena parte de los
+            // demás mandan la variante VT `CSI 1~`/`CSI 4~`, y algunos `CSI 7~`/`CSI 8~`. Faltando
+            // ésas, `normalize()` devolvía la secuencia cruda —`[1~`— y cualquier pantalla que
+            // preguntara por 'home' o 'end' simplemente no reaccionaba.
+            //
+            // Medido, no leído (greenhouse evidence/0168): `tmux send-keys Home` emite `\033[1~` en
+            // esta máquina, y la pantalla del chat de app-runtime se quedó sin sus dos teclas de
+            // salto con el aviso anunciándolas.
+            "\033[H", "\033[1~", "\033[7~", "\033OH" => 'home',
+            "\033[F", "\033[4~", "\033[8~", "\033OF" => 'end',
             "\033[5~" => 'pageup',
             "\033[6~" => 'pagedown',
             "\033[3~" => 'delete',

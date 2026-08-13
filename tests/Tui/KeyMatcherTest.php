@@ -169,4 +169,44 @@ final class KeyMatcherTest extends TestCase
         self::assertNull(Key::printableCharacter("\033[A"));
         self::assertNull(Key::printableCharacter(''));
     }
+
+    /**
+     * Home and End arrive in more than one shape, and only one was in the table.
+     *
+     * `CSI H`/`CSI F` is what some terminals emit; tmux, xterm and most of the rest send the VT
+     * variant `CSI 1~`/`CSI 4~`, and some send `CSI 7~`/`CSI 8~`. Missing those, normalize() handed
+     * back the raw sequence and every screen asking for 'home' or 'end' simply did not react —
+     * measured in greenhouse evidence/0168 against a real tmux, where a chat screen advertised both
+     * keys in its footer and neither did anything.
+     */
+    #[DataProvider('lasFormasDeHomeYEnd')]
+    public function testHomeAndEndAreRecognisedHoweverTheTerminalSendsThem(string $secuencia, string $esperado): void
+    {
+        self::assertSame($esperado, KeyMatcher::normalize($secuencia));
+    }
+
+    /** @return array<string, array{string, string}> */
+    public static function lasFormasDeHomeYEnd(): array
+    {
+        return [
+            'home CSI H' => ["\033[H", 'home'],
+            'home VT 1~ (lo que manda tmux)' => ["\033[1~", 'home'],
+            'home VT 7~' => ["\033[7~", 'home'],
+            'home SS3' => ["\033OH", 'home'],
+            'end CSI F' => ["\033[F", 'end'],
+            'end VT 4~ (lo que manda tmux)' => ["\033[4~", 'end'],
+            'end VT 8~' => ["\033[8~", 'end'],
+            'end SS3' => ["\033OF", 'end'],
+        ];
+    }
+
+    /**
+     * THE CONTROL: a sequence nobody mapped still comes back raw.
+     *
+     * Without it, a normalize() that answered 'home' to everything would pass every case above.
+     */
+    public function testAnUnmappedSequenceIsStillReturnedRaw(): void
+    {
+        self::assertSame("\033[99~", KeyMatcher::normalize("\033[99~"));
+    }
 }
