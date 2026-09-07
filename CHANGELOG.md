@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/getmilpa/live-tui/compare/v0.8.2...v0.9.0) (2026-09-07)
+
+
+### Features
+
+* **state:** a table says which key of the state it came from ([#27](https://github.com/getmilpa/live-tui/issues/27)) ([be9b7d7](https://github.com/getmilpa/live-tui/commit/be9b7d7b0d0ffa4c525c78a8a26340d204b395e0))
+
 ## [0.7.0](https://github.com/getmilpa/live-tui/compare/v0.6.0...v0.7.0) (2026-08-05)
 
 
