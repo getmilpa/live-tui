@@ -47,7 +47,12 @@ final readonly class StateToNode
 
         foreach ($state as $key => $value) {
             if (is_array($value)) {
-                $children[] = $this->table((string) $key, $value);
+                // The key CAPTIONS the table, because it is the only thing that says which part of the state
+                // this one is. A section whose state carries several arrays — a declared view, whose state is
+                // one entry per component — renders as a stack of identical `Field | Value` headers otherwise,
+                // and a table that does not say what it is about is a table nobody can read. The word is the
+                // DATA's, never the screen's: it is the key the state already carried.
+                $children[] = $this->table((string) $key, $value, (string) $key);
 
                 continue;
             }
@@ -56,6 +61,8 @@ final readonly class StateToNode
         }
 
         if ($pairs !== []) {
+            // No caption: `record` is this class's own word for «the loose scalars», and inventing a word is
+            // the one thing it does not do. The section's title already names them.
             $children[] = $this->table('record', $pairs);
         }
 
@@ -69,8 +76,9 @@ final readonly class StateToNode
      * branch that can fall through, because every shape reduces to rows.
      *
      * @param array<array-key, mixed> $value
+     * @param string|null             $caption what the table is about, painted in its top border — null for none
      */
-    private function table(string $id, array $value): TuiNode
+    private function table(string $id, array $value, ?string $caption = null): TuiNode
     {
         $rows = [];
 
@@ -94,13 +102,18 @@ final readonly class StateToNode
             }
         }
 
-        return new TuiNode($id, 'data-table', props: [
+        $props = [
             'columns' => array_map(
                 static fn (string $key): array => ['key' => $key, 'label' => $key],
                 array_keys($keys),
             ),
             'rows' => $rows,
-        ]);
+        ];
+        if ($caption !== null) {
+            $props['caption'] = $caption;
+        }
+
+        return new TuiNode($id, 'data-table', props: $props);
     }
 
     /**
