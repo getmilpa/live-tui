@@ -83,10 +83,12 @@ final class StateToNodeTest extends TestCase
         // Mechanically, not by promise: the only human-readable strings this
         // class may contain are the two default headers on its constructor.
         $source = (string) file_get_contents(__DIR__ . '/../../../src/Tui/State/StateToNode.php');
-        $code = self::stripComments($source);
+        // Empty string literals are stripped FIRST: `''` carries no word, and leaving it in makes the
+        // regex below pair its opening quote with the next one and report the whole file as a literal.
+        $code = str_replace("''", '', self::stripComments($source));
 
         preg_match_all("/'([^']{2,})'/", $code, $matches);
-        $literals = array_values(array_diff($matches[1], ['Field', 'Value', 'data-table', 'section', 'record', 'box', 'title', 'columns', 'rows', 'key', 'label']));
+        $literals = array_values(array_diff($matches[1], ['Field', 'Value', 'data-table', 'section', 'record', 'box', 'title', 'columns', 'rows', 'key', 'label', 'caption']));
 
         self::assertSame([], $literals, 'The mapper grew a word of its own: ' . implode(', ', $literals));
     }
@@ -97,6 +99,25 @@ final class StateToNodeTest extends TestCase
         $columns = $node->children[0]->props['columns'];
 
         self::assertSame(['0', '1'], array_column($columns, 'key'));
+    }
+
+    /**
+     * A table says which part of the state it came from.
+     *
+     * A state carrying several arrays — a declared view's, which is one entry per component — rendered as a
+     * stack of identical `Field | Value` headers with nothing saying which was which. `DataTableRenderer`
+     * already painted a `caption` in its top border; the mapper simply never passed one.
+     *
+     * The word is the DATA's: it is the key the state already carried, never one this class invented — which
+     * is why the loose scalars get NO caption. `record` is this class's own word for them.
+     */
+    public function testATableIsCaptionedWithTheKeyItCameFrom(): void
+    {
+        $node = (new StateToNode())->map('X', ['sessions' => [['id' => 'a']], 'model' => 'qwen']);
+
+        self::assertSame('sessions', $node->children[0]->props['caption'], 'the array table carries its key');
+        self::assertArrayNotHasKey('caption', $node->children[1]->props, 'the loose scalars carry no invented word');
+        self::assertStringContainsString('sessions', self::render($node));
     }
 
     private static function render(TuiNode $node): string
