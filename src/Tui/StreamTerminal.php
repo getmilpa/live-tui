@@ -45,6 +45,21 @@ final class StreamTerminal implements TerminalInterface
     private bool $resizeInstalled = false;
 
     /**
+     * The signals that end a process by default: hangup, interrupt, quit, terminate. Numbers, not the `SIG*`
+     * constants, because those exist only where pcntl does.
+     */
+    private const ENDING_SIGNALS = [1, 2, 3, 15];
+
+    /**
+     * What each ending signal did before {@see self::start()} took it, to hand it back on {@see self::stop()}.
+     *
+     * @var array<int, callable|int>
+     */
+    private array $previousHandlers = [];
+
+    private bool $restoresAtShutdown = false;
+
+    /**
      * @param resource|null $input  Stream the terminal reads input bytes from.
      * @param resource|null $output Stream the terminal writes ANSI output to.
      */
@@ -70,8 +85,21 @@ final class StreamTerminal implements TerminalInterface
 
         if (function_exists('stream_isatty') && @stream_isatty($this->input)) {
             $this->savedStty = shell_exec('stty -g');
-            shell_exec('stty -icanon -echo min 0 time 0');
+            // `-isig`: Ctrl-C, Ctrl-\ and Ctrl-Z arrive as the keys they are instead of as signals. A screen
+            // decides what Ctrl-C means — every screen of the family quits on it —, and quitting through the loop
+            // is what restores the terminal. As a signal it killed the process between two frames and left the
+            // terminal without echo and without lines (greenhouse evidence/1053, F2; decisions/0524).
+            shell_exec('stty -icanon -echo -isig min 0 time 0');
             stream_set_blocking($this->input, false);
+        }
+
+        // Whatever ends the process after this — a fatal error, an exit() somewhere in the screen's code, a
+        // signal from outside — hands the terminal back first. A shutdown function runs where `finally` does not.
+        if (!$this->restoresAtShutdown) {
+            register_shutdown_function(function (): void {
+                $this->stop();
+            });
+            $this->restoresAtShutdown = true;
         }
 
         if ($this->title !== null) {
@@ -84,12 +112,46 @@ final class StreamTerminal implements TerminalInterface
                 $onResize();
             });
             $this->resizeInstalled = true;
+
+            foreach (self::ENDING_SIGNALS as $signal) {
+                $previous = pcntl_signal_get_handler($signal);
+                // Ignored before (a `nohup`, a supervisor that owns the signal): it stays ignored.
+                if ($previous === SIG_IGN) {
+                    continue;
+                }
+                $this->previousHandlers[$signal] = $previous;
+                pcntl_signal($signal, function (int $signal): void {
+                    $this->endedBy($signal);
+                });
+            }
         }
     }
 
     /**
+     * A signal that ends the process arrived while the terminal was raw: restore it, then let the signal do what
+     * it did before — the handler the process already had, or the default death by that signal, so whoever waits
+     * on this process still reads why it ended.
+     */
+    private function endedBy(int $signal): void
+    {
+        $previous = $this->previousHandlers[$signal] ?? SIG_DFL;
+        $this->stop();
+        if (is_callable($previous)) {
+            $previous($signal, []);
+
+            return;
+        }
+        pcntl_signal($signal, SIG_DFL);
+        if (function_exists('posix_kill')) {
+            posix_kill(getmypid(), $signal);
+        }
+
+        exit(128 + $signal);
+    }
+
+    /**
      * Restores the terminal to how it was found: previous settings, visible cursor,
-     * default resize handling.
+     * default resize handling, and whatever the ending signals did before.
      */
     public function stop(): void
     {
@@ -109,6 +171,10 @@ final class StreamTerminal implements TerminalInterface
             pcntl_signal(SIGWINCH, SIG_DFL);
             $this->resizeInstalled = false;
         }
+        foreach ($this->previousHandlers as $signal => $previous) {
+            pcntl_signal($signal, $previous);
+        }
+        $this->previousHandlers = [];
         $this->started = false;
         $this->inputHandler = null;
     }

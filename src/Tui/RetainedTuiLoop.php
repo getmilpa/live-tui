@@ -334,7 +334,10 @@ final class RetainedTuiLoop
                 // una terminal manda el resto en microsegundos, una persona
                 // deja el Escape colgado indefinidamente— así que lo pendiente
                 // se emite solo cuando lleva demasiado esperando.
-                if ($this->inputBuffer->pending() !== '') {
+                // Only an ESC is ambiguous in time. Half a UTF-8 character is not: its other half is coming, and
+                // flushing it would hand the screen a byte that is no key — a slow link (ssh, a tunnel) splits a
+                // character across reads further apart than any escape timeout (greenhouse evidence/1058).
+                if (str_starts_with($this->inputBuffer->pending(), InputBuffer::ESC)) {
                     $ahora = microtime(true);
                     $this->pendingSince ??= $ahora;
 
@@ -574,77 +577,61 @@ final class RetainedTuiLoop
     private readonly InputBuffer $inputBuffer;
 
     /**
-     * Pending complete sequences already accepted from InputBuffer
-     * but not yet returned by {@see readKey()}. When bracketed paste
-     * is active, a paste window is stripped from this stream so the
-     * byte-by-byte loop can still dispatch one "key" at a time outside
-     * pastes while the detector consumes the whole paste as one event.
+     * Reads what the person typed while the screen was busy, keeps it for the loop, and says whether it held a quit key.
+     *
+     * A screen whose key handler does long work — a turn of an agent — holds the loop, so nothing is read until the
+     * work ends. With Ctrl-C a key and no longer a signal (greenhouse decisions/0524), that would make the person
+     * wait out the work to leave. A screen that repaints during its work calls this at each repaint: every byte
+     * read here is queued ahead of the next poll, in order, so typing ahead loses nothing, and a quit key among
+     * them lets the screen stop instead of finishing first.
      */
-    private string $pendingInput = '';
-
-    /**
-     * The whole of key assembly with no I/O in it: drains anything already
-     * complete, then feeds the chunk through {@see InputBuffer} (which holds
-     * partial escape sequences across reads and returns only complete ones)
-     * and the paste detector. Split out of {@see readKey()} so the same
-     * assembly can be driven from a stream or from a {@see TerminalInterface},
-     * which is the only difference between the two.
-     */
-    private function consumeChunk(string $chunk): string
+    public function readWhileBusy(TerminalInterface $terminal): bool
     {
-        // Drain any pending complete sequences first.
-        if ($this->pendingInput !== '') {
-            $next = $this->shiftPending();
-            if ($next !== '') {
-                return $next;
+        $bytes = $terminal->pollInput();
+        if ($bytes === '') {
+            return false;
+        }
+        $this->pushedInput .= $bytes;
+        foreach ((new InputBuffer())->feedKeys($bytes) as $key) {
+            if (in_array($this->normalizeKey($key), $this->quitKeys, true)) {
+                return true;
             }
         }
 
-        if ($chunk === '') {
-            return '';
-        }
-
-        $completed = $this->inputBuffer->feed($chunk);
-        if ($this->paste !== null) {
-            $this->pendingInput = $this->paste->feed($completed);
-        } else {
-            $this->pendingInput = $completed;
-        }
-
-        return $this->shiftPending();
+        return false;
     }
 
     /**
-     * Shifts one logical keypress off the front of {@see pendingInput}.
-     * A bare byte is returned as-is; an ANSI escape sequence is read
-     * up to its terminator (the InputBuffer already guaranteed the
-     * pendingInput only holds complete sequences, so we just return
-     * the whole escape run when the first char is ESC).
+     * Keys already assembled and not yet dispatched, oldest first.
+     *
+     * The loop dispatches one key per pass, and a single read can carry many: a fast typist puts two keys in one
+     * poll, a paste without bracketed-paste mode puts a whole sentence. Every key of every read lands here, and a
+     * read that arrives while keys are still queued is appended behind them — never instead of them (greenhouse
+     * evidence/1053, F1: at 40 ms a key the chat received `cal:la-103_kerne` for `call:lab-1053_kernel`).
+     *
+     * @var list<string>
      */
-    private function shiftPending(): string
+    private array $queue = [];
+
+    /**
+     * The whole of key assembly with no I/O in it: queues every key the chunk completes, then hands out the oldest.
+     *
+     * {@see InputBuffer} holds a partial escape sequence or a partial UTF-8 character across reads and cuts the
+     * rest into keys; the paste detector swallows what falls inside a paste window. Kept apart from the reading so
+     * the same assembly serves a stream and a {@see TerminalInterface}.
+     */
+    private function consumeChunk(string $chunk): string
     {
-        if ($this->pendingInput === '') {
-            return '';
-        }
-        if ($this->pendingInput[0] !== "\033") {
-            // Non-escape: return one printable char (UTF-8 aware).
-            $char = mb_substr($this->pendingInput, 0, 1, 'UTF-8');
-            $this->pendingInput = mb_substr($this->pendingInput, 1, null, 'UTF-8');
-
-            return $char;
-        }
-        // Escape sequence: return the whole run. InputBuffer guaranteed
-        // it is complete, so we do not need to re-parse it.
-        $next = strpos($this->pendingInput, "\033", 1);
-        if ($next === false) {
-            $sequence = $this->pendingInput;
-            $this->pendingInput = '';
-        } else {
-            $sequence = substr($this->pendingInput, 0, $next);
-            $this->pendingInput = substr($this->pendingInput, $next);
+        if ($chunk !== '') {
+            foreach ($this->inputBuffer->feedKeys($chunk) as $key) {
+                $passthrough = $this->paste !== null ? $this->paste->feed($key) : $key;
+                if ($passthrough !== '') {
+                    $this->queue[] = $passthrough;
+                }
+            }
         }
 
-        return $sequence;
+        return array_shift($this->queue) ?? '';
     }
 
     /**
