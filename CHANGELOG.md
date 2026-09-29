@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/getmilpa/live-tui/compare/v0.9.0...v0.9.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **tui:** every key of every read arrives, and the terminal comes back however a screen ends ([#29](https://github.com/getmilpa/live-tui/issues/29)) ([9aa100a](https://github.com/getmilpa/live-tui/commit/9aa100a97250428b6f6c1b21e58cb789a24d343a))
+
 ## [0.9.0](https://github.com/getmilpa/live-tui/compare/v0.8.2...v0.9.0) (2026-09-07)
 
 
