@@ -97,6 +97,18 @@ final class EveryKeyArrivesTest extends TestCase
         self::assertSame($expected, $this->typed([...$reads, "\x03"]));
     }
 
+    public function testHalfACharacterWaitsForItsOtherHalfPastTheEscapeTimeout(): void
+    {
+        // The escape timeout is for a lone ESC. A character split by a slow link arrives later than any timeout, and
+        // flushing its first byte would hand the screen a byte that is no key (evidence/1058: `ñ` lost at 250 ms).
+        self::assertSame(['a', 'ñ', 'b'], $this->typed(["a\xC3", '', '', '', '', "\xB1b", "\x03"], escapeTimeout: 0));
+    }
+
+    public function testALoneEscapeIsStillFlushedWhenItsTimeoutPasses(): void
+    {
+        self::assertSame(["\033", 'x'], $this->typed(["\033", '', 'x', "\x03"], escapeTimeout: 0));
+    }
+
     public function testAReadThatArrivesWithKeysStillQueuedIsKeptWhole(): void
     {
         // The pushed and the polled bytes of one pass are one read; the next pass brings another before the first
@@ -196,7 +208,7 @@ final class EveryKeyArrivesTest extends TestCase
      *
      * @return list<string>
      */
-    private function typed(array $reads, ?BracketedPaste $paste = null): array
+    private function typed(array $reads, ?BracketedPaste $paste = null, int $escapeTimeout = 50000): array
     {
         $registry = new TuiNodeRendererRegistry();
         $registry->register(new TextRenderer());
@@ -218,7 +230,7 @@ final class EveryKeyArrivesTest extends TestCase
             quitKeys: ['ctrl+c'],
         );
 
-        $loop->runOn(new FakeTerminal($reads), idleMicroseconds: 0, maxTicks: 200);
+        $loop->runOn(new FakeTerminal($reads), idleMicroseconds: 0, maxTicks: 200, escapeTimeoutMicroseconds: $escapeTimeout);
 
         return $received;
     }

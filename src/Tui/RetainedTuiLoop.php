@@ -334,7 +334,10 @@ final class RetainedTuiLoop
                 // una terminal manda el resto en microsegundos, una persona
                 // deja el Escape colgado indefinidamente— así que lo pendiente
                 // se emite solo cuando lleva demasiado esperando.
-                if ($this->inputBuffer->pending() !== '') {
+                // Only an ESC is ambiguous in time. Half a UTF-8 character is not: its other half is coming, and
+                // flushing it would hand the screen a byte that is no key — a slow link (ssh, a tunnel) splits a
+                // character across reads further apart than any escape timeout (greenhouse evidence/1058).
+                if (str_starts_with($this->inputBuffer->pending(), InputBuffer::ESC)) {
                     $ahora = microtime(true);
                     $this->pendingSince ??= $ahora;
 
