@@ -574,6 +574,31 @@ final class RetainedTuiLoop
     private readonly InputBuffer $inputBuffer;
 
     /**
+     * Reads what the person typed while the screen was busy, keeps it for the loop, and says whether it held a quit key.
+     *
+     * A screen whose key handler does long work — a turn of an agent — holds the loop, so nothing is read until the
+     * work ends. With Ctrl-C a key and no longer a signal (greenhouse decisions/0524), that would make the person
+     * wait out the work to leave. A screen that repaints during its work calls this at each repaint: every byte
+     * read here is queued ahead of the next poll, in order, so typing ahead loses nothing, and a quit key among
+     * them lets the screen stop instead of finishing first.
+     */
+    public function readWhileBusy(TerminalInterface $terminal): bool
+    {
+        $bytes = $terminal->pollInput();
+        if ($bytes === '') {
+            return false;
+        }
+        $this->pushedInput .= $bytes;
+        foreach ((new InputBuffer())->feedKeys($bytes) as $key) {
+            if (in_array($this->normalizeKey($key), $this->quitKeys, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Keys already assembled and not yet dispatched, oldest first.
      *
      * The loop dispatches one key per pass, and a single read can carry many: a fast typist puts two keys in one

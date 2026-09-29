@@ -129,6 +129,41 @@ final class EveryKeyArrivesTest extends TestCase
         self::assertSame(["dos ñ\033[A tres"], $pasted);
     }
 
+    public function testWhatIsTypedWhileTheScreenIsBusyArrivesAfterTheWorkInOrder(): void
+    {
+        $registry = new TuiNodeRendererRegistry();
+        $registry->register(new TextRenderer());
+        $received = [];
+        $busy = new FakeTerminal(['ab', "c\x03", '']);
+        $quits = [];
+
+        $loop = new RetainedTuiLoop(
+            new RetainedTuiRenderer(new SimpleTuiLayoutEngine(), $registry),
+            static fn (): TuiNode => new TuiNode('root', 'box', children: [new TuiNode('a', 'text', props: ['text' => 'x'])]),
+            ['a'],
+            'a',
+            40,
+            6,
+            handleKey: static function (string $key, RetainedTuiLoop $loop) use (&$received, &$quits, $busy): bool {
+                $received[] = $loop->lastRawKey();
+                if ($key === 'w') {
+                    // Long work: the person types while it runs; each repaint reads it.
+                    $quits[] = $loop->readWhileBusy($busy);
+                    $quits[] = $loop->readWhileBusy($busy);
+                    $quits[] = $loop->readWhileBusy($busy);
+                }
+
+                return true;
+            },
+            quitKeys: ['ctrl+c'],
+        );
+
+        $loop->runOn(new FakeTerminal(['w', 'd', "\x03"]), idleMicroseconds: 0, maxTicks: 50);
+
+        self::assertSame([false, true, false], $quits, 'the read that held Ctrl-C says so; an empty one says nothing');
+        self::assertSame(['w', 'a', 'b', 'c'], $received, 'typed ahead, kept in order, and nothing after the quit key');
+    }
+
     public function testFeedKeysCutsWhereAPersonPressed(): void
     {
         $buffer = new InputBuffer();
